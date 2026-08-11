@@ -59,7 +59,7 @@ public static class SelfUpdater
         try
         {
             helper = Process.Start(new ProcessStartInfo("powershell.exe",
-                $"-NoProfile -ExecutionPolicy Bypass -NoExit -File \"{scriptPath}\"")
+                $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"")
             {
                 UseShellExecute = false,
                 WorkingDirectory = stagingDir,
@@ -186,12 +186,19 @@ public static class SelfUpdater
             if ($copied) {
                 Write-Host 'Update installed. Starting AIQuota...'
                 Start-Process -FilePath '{{targetExe}}' -ArgumentList '{{Program.PostUpdateRelaunchArgument}}'
-                Write-Host 'Done - you can close this window.'
+                Write-Host 'Update complete.'
             } else {
                 Write-Host 'Update failed: could not replace AIQuota.exe (it may still be in use).' -ForegroundColor Red
                 Write-Host 'You can retry the update from the AIQuota tray menu, or update manually from:'
                 Write-Host '{{AppInfo.RepositoryUrl}}/releases/latest'
             }
+
+            Write-Host ''
+            for ($secondsLeft = 20; $secondsLeft -ge 1; $secondsLeft--) {
+                Write-Host -NoNewline ("`rThis window will close automatically in {0,2} second(s)... " -f $secondsLeft)
+                Start-Sleep -Seconds 1
+            }
+            Write-Host ''
 
             Set-Location $env:TEMP
             Remove-Item -LiteralPath '{{stagingDir}}' -Recurse -Force -ErrorAction SilentlyContinue
