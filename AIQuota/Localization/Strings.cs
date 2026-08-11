@@ -39,6 +39,8 @@ public static class Strings
     public static string MenuLogin => T("Bei claude.ai anmelden…", "Log in with claude.ai…");
     public static string MenuLogout => T("Abmelden", "Log out");
     public static string MenuStartup => T("Bei Windows-Start ausführen", "Run at Windows startup");
+    public static string MenuCheckForNewVersion => T("Automatisch nach neuer Version suchen", "Automatically check for new version");
+    public static string MenuNewVersionAvailable(string version) => T($"Neue Version verfügbar: v{version}", $"New version available: v{version}");
     public static string MenuRefresh => T("Jetzt aktualisieren", "Refresh now");
     public static string MenuExit => T("Beenden", "Exit");
     public static string MenuLanguage => T("Sprache", "Language");
@@ -158,4 +160,7 @@ public static class Strings
 
     public static string BalloonSessionWarning(int percent) => T($"Sitzungslimit (5h) bei {percent}%.", $"Session limit (5h) at {percent}%.");
     public static string BalloonWeeklyWarning(int percent) => T($"Wochenlimit bei {percent}%.", $"Weekly limit at {percent}%.");
+    public static string BalloonNewVersionAvailable(string version) => T(
+        $"Eine neue Version (v{version}) ist verfügbar. Klicke hier, um die Release-Seite zu öffnen.",
+        $"A new version (v{version}) is available. Click here to open the release page.");
 }

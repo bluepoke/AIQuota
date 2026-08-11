@@ -24,8 +24,8 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 ![Tooltip showing session and week usage](screenshots/claude_usage_tooltip.png)
 
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
-manual refresh, login/logout, run-at-startup toggle, and a language switch
-(German/English):
+manual refresh, login/logout, run-at-startup toggle, a check-for-new-version toggle, and
+a language switch (German/English):
 
 ![Right-click menu with account, usage, and app options](screenshots/claude_usage_rmb_menu.png)
 
@@ -82,6 +82,12 @@ click the "show hidden icons" `^` arrow the first time).
 The app polls for updated usage every 5 minutes while it's running (plus whenever you
 double-click the icon or hit **Refresh now**), and refreshes its access token
 automatically in the background.
+
+**Automatically check for new version** (on by default) periodically checks GitHub
+Releases for a newer version. When one is found, you'll get a one-time balloon
+notification and a new menu entry (e.g. `New version available: v1.2.0`) — click either
+to open the release page and download it yourself; the app doesn't download or install
+anything on its own.
 
 ## Building from source
 

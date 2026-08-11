@@ -6,6 +6,7 @@ namespace AIQuota;
 public sealed class UsageTrayContext : ApplicationContext
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan NewVersionCheckInterval = TimeSpan.FromHours(6);
     private const int WarnThresholdPercent = 90;
 
     private readonly OAuthClient _oauth = new();
@@ -13,6 +14,7 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _timer;
+    private readonly System.Windows.Forms.Timer _newVersionCheckTimer;
     private readonly ToolStripMenuItem _userItem;
     private readonly ToolStripMenuItem _sessionItem;
     private readonly ToolStripMenuItem _weeklyItem;
@@ -20,6 +22,8 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _loginItem;
     private readonly ToolStripMenuItem _logoutItem;
     private readonly ToolStripMenuItem _startupItem;
+    private readonly ToolStripMenuItem _checkForNewVersionItem;
+    private readonly ToolStripMenuItem _newVersionAvailableItem;
     private readonly ToolStripMenuItem _refreshItem;
     private readonly ToolStripMenuItem _exitItem;
     private readonly ToolStripMenuItem _languageMenu;
@@ -31,10 +35,13 @@ public sealed class UsageTrayContext : ApplicationContext
     private bool _sessionWarningShown;
     private bool _weeklyWarningShown;
     private bool _refreshInProgress;
+    private bool _newVersionCheckInProgress;
     private string? _cachedAccountName;
     private bool _hasUsageSnapshot;
     private int _lastSessionPercent;
     private int _lastWeeklyPercent;
+    private string? _availableNewVersion;
+    private string? _availableNewVersionUrl;
 
     public UsageTrayContext()
     {
@@ -50,6 +57,10 @@ public sealed class UsageTrayContext : ApplicationContext
         _logoutItem.Click += OnLogoutClicked;
         _startupItem = new ToolStripMenuItem { CheckOnClick = false, Checked = StartupManager.IsEnabled() };
         _startupItem.Click += OnToggleStartup;
+        _checkForNewVersionItem = new ToolStripMenuItem { CheckOnClick = false, Checked = NewVersionPreference.IsEnabled() };
+        _checkForNewVersionItem.Click += OnToggleNewVersionCheck;
+        _newVersionAvailableItem = new ToolStripMenuItem { Visible = false };
+        _newVersionAvailableItem.Click += (_, _) => OpenNewVersionUrl();
         _refreshItem = new ToolStripMenuItem();
         _refreshItem.Click += async (_, _) => await RefreshAsync();
         _exitItem = new ToolStripMenuItem();
@@ -76,10 +87,12 @@ public sealed class UsageTrayContext : ApplicationContext
         menu.Items.Add(_loginItem);
         menu.Items.Add(_logoutItem);
         menu.Items.Add(_startupItem);
+        menu.Items.Add(_checkForNewVersionItem);
         menu.Items.Add(_languageMenu);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_githubItem);
         menu.Items.Add(_versionItem);
+        menu.Items.Add(_newVersionAvailableItem);
         menu.Items.Add(_exitItem);
 
         _notifyIcon = new NotifyIcon
@@ -89,10 +102,15 @@ public sealed class UsageTrayContext : ApplicationContext
             Visible = true,
         };
         _notifyIcon.DoubleClick += async (_, _) => await RefreshAsync();
+        _notifyIcon.BalloonTipClicked += (_, _) => OpenNewVersionUrl();
 
         _timer = new System.Windows.Forms.Timer { Interval = (int)PollInterval.TotalMilliseconds };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
+
+        _newVersionCheckTimer = new System.Windows.Forms.Timer { Interval = (int)NewVersionCheckInterval.TotalMilliseconds };
+        _newVersionCheckTimer.Tick += async (_, _) => await CheckForNewVersionAsync();
+        _newVersionCheckTimer.Start();
 
         Strings.LanguageChanged += async () =>
         {
@@ -103,6 +121,7 @@ public sealed class UsageTrayContext : ApplicationContext
         ApplyStaticMenuTexts();
         UpdateLoginMenuState();
         _ = RefreshAsync();
+        _ = CheckForNewVersionAsync();
     }
 
     private void ApplyStaticMenuTexts()
@@ -115,6 +134,9 @@ public sealed class UsageTrayContext : ApplicationContext
         _loginItem.Text = Strings.MenuLogin;
         _logoutItem.Text = Strings.MenuLogout;
         _startupItem.Text = Strings.MenuStartup;
+        _checkForNewVersionItem.Text = Strings.MenuCheckForNewVersion;
+        if (_availableNewVersion is not null)
+            _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(_availableNewVersion);
         _refreshItem.Text = Strings.MenuRefresh;
         _exitItem.Text = Strings.MenuExit;
         _languageMenu.Text = Strings.MenuLanguage;
@@ -160,6 +182,56 @@ public sealed class UsageTrayContext : ApplicationContext
         var enable = !_startupItem.Checked;
         StartupManager.SetEnabled(enable);
         _startupItem.Checked = StartupManager.IsEnabled();
+    }
+
+    private void OnToggleNewVersionCheck(object? sender, EventArgs e)
+    {
+        var enable = !_checkForNewVersionItem.Checked;
+        NewVersionPreference.SetEnabled(enable);
+        _checkForNewVersionItem.Checked = enable;
+
+        if (enable)
+        {
+            _ = CheckForNewVersionAsync();
+        }
+        else
+        {
+            _availableNewVersion = null;
+            _availableNewVersionUrl = null;
+            _newVersionAvailableItem.Visible = false;
+        }
+    }
+
+    private async Task CheckForNewVersionAsync()
+    {
+        if (_newVersionCheckInProgress || !NewVersionPreference.IsEnabled())
+            return;
+        _newVersionCheckInProgress = true;
+        try
+        {
+            var newVersion = await NewVersionChecker.CheckAsync(CancellationToken.None);
+            if (newVersion is null)
+                return;
+
+            var isNewlyDetected = _availableNewVersion != newVersion.Version;
+            _availableNewVersion = newVersion.Version;
+            _availableNewVersionUrl = newVersion.Url;
+            _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(newVersion.Version);
+            _newVersionAvailableItem.Visible = true;
+
+            if (isNewlyDetected)
+                _notifyIcon.ShowBalloonTip(8000, Strings.AppTitle, Strings.BalloonNewVersionAvailable(newVersion.Version), ToolTipIcon.Info);
+        }
+        finally
+        {
+            _newVersionCheckInProgress = false;
+        }
+    }
+
+    private void OpenNewVersionUrl()
+    {
+        if (_availableNewVersionUrl is not null)
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_availableNewVersionUrl) { UseShellExecute = true });
     }
 
     private void UpdateLoginMenuState()
@@ -287,6 +359,7 @@ public sealed class UsageTrayContext : ApplicationContext
         if (disposing)
         {
             _timer.Dispose();
+            _newVersionCheckTimer.Dispose();
             _notifyIcon.Visible = false;
             _notifyIcon.Icon?.Dispose();
             _notifyIcon.Dispose();
