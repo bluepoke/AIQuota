@@ -82,6 +82,7 @@ public static class Strings
 
     public static string UsageEmptyResponse => T("Leere Antwort", "Empty response");
     public static string UsageTimeout => T("Zeitüberschreitung", "Timed out");
+    public static string UsageNoInternet => T("Keine Internetverbindung", "No internet connection");
     public static string UsageUnexpectedFormat(string message) =>
         T($"Unerwartetes Antwortformat: {message}", $"Unexpected response format: {message}");
 

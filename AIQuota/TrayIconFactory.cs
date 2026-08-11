@@ -74,6 +74,41 @@ public static class TrayIconFactory
         return ToIcon(bitmap);
     }
 
+    /// <summary>Warning-triangle glyph, shown when a fetch fails with a network error
+    /// (e.g. no internet connection) so it's visually distinct from the "?" unavailable
+    /// icon (not logged in) and the spinning refresh icon (fetch in flight).</summary>
+    public static Icon CreateWarningIcon()
+    {
+        const int size = 32;
+        using var bitmap = new Bitmap(size, size);
+        using (var g = Graphics.FromImage(bitmap))
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+
+            var color = Color.FromArgb(240, 170, 60);
+            using var trianglePath = new GraphicsPath();
+            trianglePath.AddPolygon([
+                new PointF(size / 2f, 3f),
+                new PointF(size - 3f, size - 4f),
+                new PointF(3f, size - 4f),
+            ]);
+            trianglePath.CloseFigure();
+
+            using (var brush = new SolidBrush(color))
+                g.FillPath(brush, trianglePath);
+
+            using var textBrush = new SolidBrush(Color.FromArgb(230, 40, 30, 0));
+            using var font = new Font("Segoe UI", 15f, FontStyle.Bold, GraphicsUnit.Pixel);
+            var textSize = g.MeasureString("!", font);
+            g.DrawString("!", font, textBrush,
+                (size - textSize.Width) / 2f,
+                (size - textSize.Height) / 2f + 2f);
+        }
+
+        return ToIcon(bitmap);
+    }
+
     private static void DrawBar(Graphics g, int percent, Rectangle rect)
     {
         var clamped = Math.Clamp(percent, 0, 100);

@@ -45,12 +45,12 @@ public sealed class UsageApiClient(OAuthClient oauth)
 
     public async Task<UsageFetchResult> FetchAsync(CancellationToken cancellationToken)
     {
-        var accessToken = await oauth.GetValidAccessTokenAsync(cancellationToken);
-        if (accessToken is null)
-            return new UsageFetchResult(UsageFetchStatus.NotLoggedIn, null);
-
         try
         {
+            var accessToken = await oauth.GetValidAccessTokenAsync(cancellationToken);
+            if (accessToken is null)
+                return new UsageFetchResult(UsageFetchStatus.NotLoggedIn, null);
+
             using var request = new HttpRequestMessage(HttpMethod.Get, OAuthConfig.UsageUrl);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
@@ -73,9 +73,17 @@ public sealed class UsageApiClient(OAuthClient oauth)
 
             return new UsageFetchResult(UsageFetchStatus.Ok, snapshot);
         }
+        catch (HttpRequestException ex) when (ex.InnerException is System.Net.Sockets.SocketException)
+        {
+            return new UsageFetchResult(UsageFetchStatus.NetworkError, null, Strings.UsageNoInternet);
+        }
         catch (HttpRequestException ex)
         {
             return new UsageFetchResult(UsageFetchStatus.NetworkError, null, ex.Message);
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            return new UsageFetchResult(UsageFetchStatus.NetworkError, null, Strings.UsageNoInternet);
         }
         catch (TaskCanceledException)
         {
@@ -96,12 +104,12 @@ public sealed class UsageApiClient(OAuthClient oauth)
     /// </summary>
     public async Task<string?> FetchAccountNameAsync(CancellationToken cancellationToken)
     {
-        var accessToken = await oauth.GetValidAccessTokenAsync(cancellationToken);
-        if (accessToken is null)
-            return null;
-
         try
         {
+            var accessToken = await oauth.GetValidAccessTokenAsync(cancellationToken);
+            if (accessToken is null)
+                return null;
+
             using var request = new HttpRequestMessage(HttpMethod.Get, OAuthConfig.ProfileUrl);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
@@ -140,6 +148,10 @@ public sealed class UsageApiClient(OAuthClient oauth)
             };
         }
         catch (HttpRequestException)
+        {
+            return null;
+        }
+        catch (System.Net.Sockets.SocketException)
         {
             return null;
         }

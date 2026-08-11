@@ -226,7 +226,9 @@ public sealed class UsageTrayContext : ApplicationContext
                 return;
 
             case UsageFetchStatus.NetworkError:
+                SetIcon(TrayIconFactory.CreateWarningIcon());
                 _statusItem.Text = Strings.FetchError(result.Error ?? "");
+                _notifyIcon.Text = Truncate(Strings.FetchError(result.Error ?? ""), 127);
                 return;
         }
 
