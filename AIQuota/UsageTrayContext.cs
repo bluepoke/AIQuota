@@ -5,6 +5,8 @@ namespace AIQuota;
 
 public sealed class UsageTrayContext : ApplicationContext
 {
+    private enum IconKind { Unavailable, Warning, Usage, Refreshing }
+
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NewVersionCheckInterval = TimeSpan.FromHours(6);
     private const int WarnThresholdPercent = 90;
@@ -42,6 +44,10 @@ public sealed class UsageTrayContext : ApplicationContext
     private int _lastSessionPercent;
     private int _lastWeeklyPercent;
     private NewVersionInfo? _availableUpdate;
+    private IconKind _currentIconKind = IconKind.Unavailable;
+    private string _baseTooltipText = "";
+
+    private bool HasUpdate => _availableUpdate is not null;
 
     public UsageTrayContext()
     {
@@ -144,7 +150,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _languageEnglishItem.Checked = Strings.Current == AppLanguage.English;
         _versionItem.Text = Strings.VersionLabel(AppInfo.Version);
         _githubItem.Text = Strings.MenuGitHub;
-        _notifyIcon.Text = Strings.TooltipNotLoggedIn;
+        SetNotifyIconText(Strings.TooltipNotLoggedIn);
     }
 
     private async void OnLoginClicked(object? sender, EventArgs e)
@@ -152,7 +158,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _loginItem.Enabled = false;
         try
         {
-            _notifyIcon.Text = Strings.TooltipLoggingIn;
+            SetNotifyIconText(Strings.TooltipLoggingIn);
             await _oauth.LoginAsync(CancellationToken.None);
             UpdateLoginMenuState();
             await RefreshAsync();
@@ -198,6 +204,8 @@ public sealed class UsageTrayContext : ApplicationContext
         {
             _availableUpdate = null;
             _newVersionAvailableItem.Visible = false;
+            RedrawIconForCurrentState();
+            ApplyTooltipText();
         }
     }
 
@@ -216,6 +224,8 @@ public sealed class UsageTrayContext : ApplicationContext
             _availableUpdate = newVersion;
             _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(newVersion.Version);
             _newVersionAvailableItem.Visible = true;
+            RedrawIconForCurrentState();
+            ApplyTooltipText();
 
             if (isNewlyDetected)
                 _notifyIcon.ShowBalloonTip(8000, Strings.AppTitle, Strings.BalloonNewVersionAvailable(newVersion.Version), ToolTipIcon.Info);
@@ -241,7 +251,7 @@ public sealed class UsageTrayContext : ApplicationContext
 
         _updateInProgress = true;
         _newVersionAvailableItem.Enabled = false;
-        _notifyIcon.Text = Strings.TooltipUpdating;
+        SetNotifyIconText(Strings.TooltipUpdating);
         try
         {
             await SelfUpdater.PrepareAsync(update, CancellationToken.None);
@@ -272,7 +282,10 @@ public sealed class UsageTrayContext : ApplicationContext
         try
         {
             if (_hasUsageSnapshot)
-                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent));
+            {
+                _currentIconKind = IconKind.Refreshing;
+                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, HasUpdate));
+            }
 
             var result = await _usageApi.FetchAsync(CancellationToken.None);
             ApplyResult(result);
@@ -298,8 +311,9 @@ public sealed class UsageTrayContext : ApplicationContext
         switch (result.Status)
         {
             case UsageFetchStatus.NotLoggedIn:
-                SetIcon(TrayIconFactory.CreateUnavailableIcon());
-                _notifyIcon.Text = Strings.TooltipNotLoggedIn;
+                _currentIconKind = IconKind.Unavailable;
+                SetIcon(TrayIconFactory.CreateUnavailableIcon(HasUpdate));
+                SetNotifyIconText(Strings.TooltipNotLoggedIn);
                 _userItem.Visible = false;
                 _cachedAccountName = null;
                 _hasUsageSnapshot = false;
@@ -311,8 +325,9 @@ public sealed class UsageTrayContext : ApplicationContext
 
             case UsageFetchStatus.AuthExpired:
                 _oauth.Logout();
-                SetIcon(TrayIconFactory.CreateUnavailableIcon());
-                _notifyIcon.Text = Strings.TooltipAuthExpired;
+                _currentIconKind = IconKind.Unavailable;
+                SetIcon(TrayIconFactory.CreateUnavailableIcon(HasUpdate));
+                SetNotifyIconText(Strings.TooltipAuthExpired);
                 _userItem.Visible = false;
                 _cachedAccountName = null;
                 _hasUsageSnapshot = false;
@@ -321,9 +336,10 @@ public sealed class UsageTrayContext : ApplicationContext
                 return;
 
             case UsageFetchStatus.NetworkError:
-                SetIcon(TrayIconFactory.CreateWarningIcon());
+                _currentIconKind = IconKind.Warning;
+                SetIcon(TrayIconFactory.CreateWarningIcon(HasUpdate));
                 _statusItem.Text = Strings.FetchError(result.Error ?? "");
-                _notifyIcon.Text = Truncate(Strings.FetchError(result.Error ?? ""), 127);
+                SetNotifyIconText(Strings.FetchError(result.Error ?? ""));
                 return;
         }
 
@@ -331,11 +347,11 @@ public sealed class UsageTrayContext : ApplicationContext
         _hasUsageSnapshot = true;
         _lastSessionPercent = snapshot.SessionPercent;
         _lastWeeklyPercent = snapshot.WeeklyPercent;
-        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent));
+        _currentIconKind = IconKind.Usage;
+        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, HasUpdate));
 
-        _notifyIcon.Text = Truncate(
-            Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt),
-            127);
+        SetNotifyIconText(
+            Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt));
 
         _sessionItem.Text = Strings.SessionLabel(snapshot.SessionPercent, Strings.FormatReset(snapshot.SessionResetsAt));
         _weeklyItem.Text = Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(snapshot.WeeklyResetsAt));
@@ -349,6 +365,38 @@ public sealed class UsageTrayContext : ApplicationContext
         var old = _notifyIcon.Icon;
         _notifyIcon.Icon = icon;
         old?.Dispose();
+    }
+
+    /// <summary>Regenerates whichever icon is currently shown with the update badge added
+    /// or removed, for when update availability changes independently of the next usage
+    /// refresh (e.g. the periodic background version check).</summary>
+    private void RedrawIconForCurrentState()
+    {
+        var icon = _currentIconKind switch
+        {
+            IconKind.Warning => TrayIconFactory.CreateWarningIcon(HasUpdate),
+            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, HasUpdate),
+            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, HasUpdate),
+            _ => TrayIconFactory.CreateUnavailableIcon(HasUpdate),
+        };
+        SetIcon(icon);
+    }
+
+    /// <summary>Records the tooltip text for the current state and applies it, appending
+    /// the "update available" line when applicable so it survives later re-application via
+    /// <see cref="ApplyTooltipText"/> (e.g. when update availability changes).</summary>
+    private void SetNotifyIconText(string baseText)
+    {
+        _baseTooltipText = baseText;
+        ApplyTooltipText();
+    }
+
+    private void ApplyTooltipText()
+    {
+        var text = _availableUpdate is { } update
+            ? $"{_baseTooltipText}\n{Strings.TooltipUpdateAvailable(update.Version)}"
+            : _baseTooltipText;
+        _notifyIcon.Text = Truncate(text, 127);
     }
 
     private void MaybeWarn(UsageSnapshot snapshot)

@@ -11,7 +11,7 @@ namespace AIQuota;
 /// </summary>
 public static class TrayIconFactory
 {
-    public static Icon CreateUsageIcon(int sessionPercent, int weeklyPercent)
+    public static Icon CreateUsageIcon(int sessionPercent, int weeklyPercent, bool updateAvailable = false)
     {
         const int size = 32;
         using var bitmap = new Bitmap(size, size);
@@ -22,6 +22,9 @@ public static class TrayIconFactory
 
             DrawBar(g, sessionPercent, new Rectangle(1, 2, size - 2, 13));
             DrawBar(g, weeklyPercent, new Rectangle(1, 17, size - 2, 13));
+
+            if (updateAvailable)
+                DrawUpdateBadge(g, size);
         }
 
         return ToIcon(bitmap);
@@ -29,7 +32,7 @@ public static class TrayIconFactory
 
     /// <summary>Same usage bars as <see cref="CreateUsageIcon"/>, dimmed and overlaid with a
     /// spinning-refresh glyph, shown while a fetch is in flight.</summary>
-    public static Icon CreateRefreshingIcon(int sessionPercent, int weeklyPercent)
+    public static Icon CreateRefreshingIcon(int sessionPercent, int weeklyPercent, bool updateAvailable = false)
     {
         const int size = 32;
         using var bitmap = new Bitmap(size, size);
@@ -45,12 +48,15 @@ public static class TrayIconFactory
             g.FillRectangle(dimBrush, 0, 0, size, size);
 
             DrawRefreshGlyph(g, size);
+
+            if (updateAvailable)
+                DrawUpdateBadge(g, size);
         }
 
         return ToIcon(bitmap);
     }
 
-    public static Icon CreateUnavailableIcon()
+    public static Icon CreateUnavailableIcon(bool updateAvailable = false)
     {
         const int size = 32;
         using var bitmap = new Bitmap(size, size);
@@ -69,6 +75,9 @@ public static class TrayIconFactory
             g.DrawString("?", font, textBrush,
                 (size - textSize.Width) / 2f,
                 (size - textSize.Height) / 2f);
+
+            if (updateAvailable)
+                DrawUpdateBadge(g, size);
         }
 
         return ToIcon(bitmap);
@@ -77,7 +86,7 @@ public static class TrayIconFactory
     /// <summary>Warning-triangle glyph, shown when a fetch fails with a network error
     /// (e.g. no internet connection) so it's visually distinct from the "?" unavailable
     /// icon (not logged in) and the spinning refresh icon (fetch in flight).</summary>
-    public static Icon CreateWarningIcon()
+    public static Icon CreateWarningIcon(bool updateAvailable = false)
     {
         const int size = 32;
         using var bitmap = new Bitmap(size, size);
@@ -104,9 +113,25 @@ public static class TrayIconFactory
             g.DrawString("!", font, textBrush,
                 (size - textSize.Width) / 2f,
                 (size - textSize.Height) / 2f + 2f);
+
+            if (updateAvailable)
+                DrawUpdateBadge(g, size);
         }
 
         return ToIcon(bitmap);
+    }
+
+    /// <summary>Small yellow dot in the top-right corner flagging that a newer version is
+    /// available - drawn last so it sits on top of whatever the base icon already shows.</summary>
+    private static void DrawUpdateBadge(Graphics g, int size)
+    {
+        const float diameter = 11f;
+        var rect = new RectangleF(size - diameter - 0.5f, 0.5f, diameter, diameter);
+
+        using var border = new Pen(Color.FromArgb(220, 40, 40, 40), 1.5f);
+        using var fill = new SolidBrush(Color.FromArgb(255, 255, 205, 0));
+        g.FillEllipse(fill, rect);
+        g.DrawEllipse(border, rect);
     }
 
     private static void DrawBar(Graphics g, int percent, Rectangle rect)

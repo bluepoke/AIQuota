@@ -108,6 +108,8 @@ public static class Strings
             $"Claude Usage ({time})\nSession (5h): {sessionPercent}%{sessionRemaining}\nWeek: {weeklyPercent}%{weeklyRemaining}");
     }
 
+    public static string TooltipUpdateAvailable(string version) => T($"Update verfügbar: Version {version}", $"Update available: Version {version}");
+
     /// <summary>Shortest-possible remaining time, e.g. " (1.5h)" or " (2d3h)", for the tooltip.</summary>
     private static string FormatCompactRemaining(DateTimeOffset? resetsAt)
     {
