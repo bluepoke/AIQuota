@@ -7,7 +7,7 @@ limits you've used — at a glance, without opening the Claude Desktop app.
 ![.NET](https://img.shields.io/badge/.NET-9-512BD4)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-[Get it from the Microsoft Store](https://apps.microsoft.com/detail/9NK00NML9J4F)
+~~[Get it from the Microsoft Store](https://apps.microsoft.com/detail/9NK00NML9J4F)~~
 
 ## What it does
 
@@ -40,10 +40,11 @@ notification.
 
 ## Installation
 
-**Microsoft Store** (recommended — handles installs and updates automatically):
+**Microsoft Store** (not yet available)
+~~(recommended — handles installs and updates automatically):~~
 
-- [Install via Microsoft Store Website](https://apps.microsoft.com/detail/9NK00NML9J4F)
-- Install via Microsoft Store App: `ms-windows-store://pdp/?productid=9NK00NML9J4F`
+~~- [Install via Microsoft Store Website](https://apps.microsoft.com/detail/9NK00NML9J4F)~~
+~~- Install via Microsoft Store App: `ms-windows-store://pdp/?productid=9NK00NML9J4F`~~
 
 Or, install manually from a GitHub Release — each release comes in two variants, pick one:
 
