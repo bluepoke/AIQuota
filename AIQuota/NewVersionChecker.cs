@@ -2,12 +2,16 @@ using System.Text.Json;
 
 namespace AIQuota;
 
-public sealed record NewVersionInfo(string Version, string Url);
+/// <summary>
+/// A newer published release than the one currently running. <see cref="SelfContainedAssetUrl"/>
+/// and <see cref="FrameworkDependentAssetUrl"/> are the direct download URLs for the two zip
+/// variants published by the release workflow - either can be missing if the release doesn't
+/// (yet) have that asset, in which case <see cref="SelfUpdater"/> falls back to <see cref="ReleaseUrl"/>.
+/// </summary>
+public sealed record NewVersionInfo(string Version, string ReleaseUrl, string? SelfContainedAssetUrl, string? FrameworkDependentAssetUrl);
 
 /// <summary>
-/// Checks the GitHub Releases API for a newer published version than the one currently
-/// running. There is no in-place download/install (releases are plain zips, not an
-/// installer) - a detected new version just links the user to the release page.
+/// Checks the GitHub Releases API for a newer published version than the one currently running.
 /// </summary>
 public static class NewVersionChecker
 {
@@ -36,11 +40,17 @@ public static class NewVersionChecker
             if (!IsNewer(latestVersion, AppInfo.Version))
                 return null;
 
-            var url = document.RootElement.TryGetProperty("html_url", out var urlProperty)
+            var releaseUrl = document.RootElement.TryGetProperty("html_url", out var urlProperty)
                 ? urlProperty.GetString()
                 : null;
 
-            return new NewVersionInfo(latestVersion, url ?? $"{AppInfo.RepositoryUrl}/releases/latest");
+            var (selfContainedUrl, frameworkDependentUrl) = FindAssetUrls(document.RootElement);
+
+            return new NewVersionInfo(
+                latestVersion,
+                releaseUrl ?? $"{AppInfo.RepositoryUrl}/releases/latest",
+                selfContainedUrl,
+                frameworkDependentUrl);
         }
         catch (HttpRequestException)
         {
@@ -58,6 +68,34 @@ public static class NewVersionChecker
         {
             return null;
         }
+    }
+
+    private static (string? SelfContained, string? FrameworkDependent) FindAssetUrls(JsonElement release)
+    {
+        string? selfContainedUrl = null;
+        string? frameworkDependentUrl = null;
+
+        if (release.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var asset in assets.EnumerateArray())
+            {
+                if (!asset.TryGetProperty("name", out var nameProperty) ||
+                    nameProperty.GetString() is not { } name ||
+                    !name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!asset.TryGetProperty("browser_download_url", out var urlProperty) ||
+                    urlProperty.GetString() is not { } assetUrl)
+                    continue;
+
+                if (name.Contains("framework-dependent", StringComparison.OrdinalIgnoreCase))
+                    frameworkDependentUrl = assetUrl;
+                else
+                    selfContainedUrl = assetUrl;
+            }
+        }
+
+        return (selfContainedUrl, frameworkDependentUrl);
     }
 
     private static bool IsNewer(string latest, string current) =>

@@ -54,6 +54,12 @@ public static class Strings
         "Claude Nutzung – Anmeldung läuft (Browser öffnet sich)…",
         "Claude Usage – signing in (browser is opening)…");
     public static string TooltipAuthExpired => T("Claude Nutzung – Anmeldung abgelaufen", "Claude Usage – sign-in expired");
+    public static string TooltipUpdating => T("Claude Nutzung – Update wird installiert…", "Claude Usage – installing update…");
+
+    public static string ConfirmUpdatePrompt(string version) => T(
+        $"Version {version} ist verfügbar. Jetzt herunterladen, installieren und die App neu starten?",
+        $"Version {version} is available. Download, install it, and restart the app now?");
+    public static string UpdateFailed(string message) => T($"Update fehlgeschlagen:\n{message}", $"Update failed:\n{message}");
 
     public static string StatusPromptLogin => T("Rechtsklick > Anmelden", "Right-click > Log in");
     public static string StatusPleaseReauth => T("Bitte erneut anmelden", "Please log in again");

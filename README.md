@@ -85,9 +85,11 @@ automatically in the background.
 
 **Automatically check for new version** (on by default) periodically checks GitHub
 Releases for a newer version. When one is found, you'll get a one-time balloon
-notification and a new menu entry (e.g. `New version available: v1.2.0`) — click either
-to open the release page and download it yourself; the app doesn't download or install
-anything on its own.
+notification and a new menu entry (e.g. `New version available: v1.2.0`). Click either
+one and confirm the prompt to download, install, and restart with the new version —
+nothing happens without that confirmation. It picks the same self-contained/framework-
+dependent variant you're already running, matching Defender's usual "unknown publisher"
+warning for the manual zip route.
 
 ## Building from source
 

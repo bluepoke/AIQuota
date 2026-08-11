@@ -4,14 +4,31 @@ namespace AIQuota;
 
 static class Program
 {
+    /// <summary>Passed by <see cref="SelfUpdater"/>'s helper script when relaunching after a
+    /// self-update, so the new instance waits for the old one's single-instance mutex to
+    /// free up instead of immediately reporting "already running".</summary>
+    public const string PostUpdateRelaunchArgument = "--post-update";
+
     /// <summary>
     /// The main entry point for the application. Tray-only, no visible window.
     /// </summary>
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
-        using var singleInstanceGuard = new Mutex(initiallyOwned: true, "AIQuota_SingleInstance", out var isNew);
-        if (!isNew)
+        var isPostUpdateRelaunch = args.Contains(PostUpdateRelaunchArgument);
+
+        using var singleInstanceGuard = new Mutex(initiallyOwned: false, "AIQuota_SingleInstance");
+        bool acquired;
+        try
+        {
+            acquired = singleInstanceGuard.WaitOne(isPostUpdateRelaunch ? TimeSpan.FromSeconds(15) : TimeSpan.Zero);
+        }
+        catch (AbandonedMutexException)
+        {
+            acquired = true;
+        }
+
+        if (!acquired)
         {
             MessageBox.Show(
                 Strings.InstanceAlreadyRunning,
@@ -21,11 +38,18 @@ static class Program
             return;
         }
 
-        Application.ThreadException += (_, e) => ShowUnexpectedError(e.Exception);
-        AppDomain.CurrentDomain.UnhandledException += (_, e) => ShowUnexpectedError(e.ExceptionObject as Exception);
+        try
+        {
+            Application.ThreadException += (_, e) => ShowUnexpectedError(e.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (_, e) => ShowUnexpectedError(e.ExceptionObject as Exception);
 
-        ApplicationConfiguration.Initialize();
-        Application.Run(new UsageTrayContext());
+            ApplicationConfiguration.Initialize();
+            Application.Run(new UsageTrayContext());
+        }
+        finally
+        {
+            singleInstanceGuard.ReleaseMutex();
+        }
     }
 
     /// <summary>

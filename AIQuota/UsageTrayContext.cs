@@ -36,12 +36,12 @@ public sealed class UsageTrayContext : ApplicationContext
     private bool _weeklyWarningShown;
     private bool _refreshInProgress;
     private bool _newVersionCheckInProgress;
+    private bool _updateInProgress;
     private string? _cachedAccountName;
     private bool _hasUsageSnapshot;
     private int _lastSessionPercent;
     private int _lastWeeklyPercent;
-    private string? _availableNewVersion;
-    private string? _availableNewVersionUrl;
+    private NewVersionInfo? _availableUpdate;
 
     public UsageTrayContext()
     {
@@ -60,7 +60,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _checkForNewVersionItem = new ToolStripMenuItem { CheckOnClick = false, Checked = NewVersionPreference.IsEnabled() };
         _checkForNewVersionItem.Click += OnToggleNewVersionCheck;
         _newVersionAvailableItem = new ToolStripMenuItem { Visible = false };
-        _newVersionAvailableItem.Click += (_, _) => OpenNewVersionUrl();
+        _newVersionAvailableItem.Click += (_, _) => OnNewVersionClicked();
         _refreshItem = new ToolStripMenuItem();
         _refreshItem.Click += async (_, _) => await RefreshAsync();
         _exitItem = new ToolStripMenuItem();
@@ -102,7 +102,7 @@ public sealed class UsageTrayContext : ApplicationContext
             Visible = true,
         };
         _notifyIcon.DoubleClick += async (_, _) => await RefreshAsync();
-        _notifyIcon.BalloonTipClicked += (_, _) => OpenNewVersionUrl();
+        _notifyIcon.BalloonTipClicked += (_, _) => OnNewVersionClicked();
 
         _timer = new System.Windows.Forms.Timer { Interval = (int)PollInterval.TotalMilliseconds };
         _timer.Tick += async (_, _) => await RefreshAsync();
@@ -135,8 +135,8 @@ public sealed class UsageTrayContext : ApplicationContext
         _logoutItem.Text = Strings.MenuLogout;
         _startupItem.Text = Strings.MenuStartup;
         _checkForNewVersionItem.Text = Strings.MenuCheckForNewVersion;
-        if (_availableNewVersion is not null)
-            _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(_availableNewVersion);
+        if (_availableUpdate is not null)
+            _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(_availableUpdate.Version);
         _refreshItem.Text = Strings.MenuRefresh;
         _exitItem.Text = Strings.MenuExit;
         _languageMenu.Text = Strings.MenuLanguage;
@@ -196,8 +196,7 @@ public sealed class UsageTrayContext : ApplicationContext
         }
         else
         {
-            _availableNewVersion = null;
-            _availableNewVersionUrl = null;
+            _availableUpdate = null;
             _newVersionAvailableItem.Visible = false;
         }
     }
@@ -213,9 +212,8 @@ public sealed class UsageTrayContext : ApplicationContext
             if (newVersion is null)
                 return;
 
-            var isNewlyDetected = _availableNewVersion != newVersion.Version;
-            _availableNewVersion = newVersion.Version;
-            _availableNewVersionUrl = newVersion.Url;
+            var isNewlyDetected = _availableUpdate?.Version != newVersion.Version;
+            _availableUpdate = newVersion;
             _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(newVersion.Version);
             _newVersionAvailableItem.Visible = true;
 
@@ -228,10 +226,35 @@ public sealed class UsageTrayContext : ApplicationContext
         }
     }
 
-    private void OpenNewVersionUrl()
+    private async void OnNewVersionClicked()
     {
-        if (_availableNewVersionUrl is not null)
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_availableNewVersionUrl) { UseShellExecute = true });
+        if (_availableUpdate is not { } update || _updateInProgress)
+            return;
+
+        var confirmed = MessageBox.Show(
+            Strings.ConfirmUpdatePrompt(update.Version),
+            Strings.AppTitle,
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question) == DialogResult.Yes;
+        if (!confirmed)
+            return;
+
+        _updateInProgress = true;
+        _newVersionAvailableItem.Enabled = false;
+        _notifyIcon.Text = Strings.TooltipUpdating;
+        try
+        {
+            await SelfUpdater.PrepareAsync(update, CancellationToken.None);
+            ExitThread();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(Strings.UpdateFailed(ex.Message), Strings.AppTitle,
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            _newVersionAvailableItem.Enabled = true;
+            _updateInProgress = false;
+            await RefreshAsync();
+        }
     }
 
     private void UpdateLoginMenuState()
