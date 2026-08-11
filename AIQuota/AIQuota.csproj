@@ -21,6 +21,21 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
+  <!-- Store edition: pass -p:StoreEdition=true when publishing for MSIX/Store submission.
+       The Microsoft Store handles updates itself, so that build must not ship the GitHub
+       self-updater - both because Store policy forbids apps updating themselves outside
+       the Store, and because the packaged install location is read-only anyway. The
+       GitHub-distributed zip builds (default, StoreEdition unset) keep the full feature. -->
+  <PropertyGroup Condition="'$(StoreEdition)' == 'true'">
+    <DefineConstants>$(DefineConstants);STORE_EDITION</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(StoreEdition)' == 'true'">
+    <Compile Remove="SelfUpdater.cs" />
+    <Compile Remove="NewVersionChecker.cs" />
+    <Compile Remove="NewVersionPreference.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
   </ItemGroup>

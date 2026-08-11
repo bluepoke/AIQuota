@@ -99,6 +99,9 @@ jobs:
           echo "VERSION=$version" >> $env:GITHUB_OUTPUT
           echo "MSIX_VERSION=$msixVersion" >> $env:GITHUB_OUTPUT
 
+      # StoreEdition=true strips the GitHub self-updater from the build: Store apps must not
+      # update themselves outside the Store, and the packaged install location is read-only
+      # anyway, so the feature would just fail. See AIQuota.csproj for what it excludes.
       - name: Publish
         run: >
           dotnet publish ./AIQuota/AIQuota.csproj
@@ -107,6 +110,7 @@ jobs:
           --self-contained true
           -p:PublishSingleFile=true
           -p:Version=${{ steps.version.outputs.VERSION }}
+          -p:StoreEdition=true
           -o ./msix-staging
 
       - name: Stage manifest and assets

@@ -8,7 +8,9 @@ public sealed class UsageTrayContext : ApplicationContext
     private enum IconKind { Unavailable, Warning, Usage, Refreshing }
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(5);
+#if !STORE_EDITION
     private static readonly TimeSpan NewVersionCheckInterval = TimeSpan.FromHours(6);
+#endif
     private const int WarnThresholdPercent = 90;
 
     private readonly OAuthClient _oauth = new();
@@ -16,7 +18,9 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _timer;
+#if !STORE_EDITION
     private readonly System.Windows.Forms.Timer _newVersionCheckTimer;
+#endif
     private readonly ToolStripMenuItem _userItem;
     private readonly ToolStripMenuItem _sessionItem;
     private readonly ToolStripMenuItem _weeklyItem;
@@ -24,8 +28,10 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _loginItem;
     private readonly ToolStripMenuItem _logoutItem;
     private readonly ToolStripMenuItem _startupItem;
+#if !STORE_EDITION
     private readonly ToolStripMenuItem _checkForNewVersionItem;
     private readonly ToolStripMenuItem _newVersionAvailableItem;
+#endif
     private readonly ToolStripMenuItem _refreshItem;
     private readonly ToolStripMenuItem _exitItem;
     private readonly ToolStripMenuItem _languageMenu;
@@ -37,17 +43,26 @@ public sealed class UsageTrayContext : ApplicationContext
     private bool _sessionWarningShown;
     private bool _weeklyWarningShown;
     private bool _refreshInProgress;
+#if !STORE_EDITION
     private bool _newVersionCheckInProgress;
     private bool _updateInProgress;
+#endif
     private string? _cachedAccountName;
     private bool _hasUsageSnapshot;
     private int _lastSessionPercent;
     private int _lastWeeklyPercent;
+#if !STORE_EDITION
     private NewVersionInfo? _availableUpdate;
+#endif
     private IconKind _currentIconKind = IconKind.Unavailable;
     private string _baseTooltipText = "";
 
+#if STORE_EDITION
+    // The Microsoft Store handles updates; this edition never has one to report.
+    private const bool HasUpdate = false;
+#else
     private bool HasUpdate => _availableUpdate is not null;
+#endif
 
     public UsageTrayContext()
     {
@@ -63,10 +78,12 @@ public sealed class UsageTrayContext : ApplicationContext
         _logoutItem.Click += OnLogoutClicked;
         _startupItem = new ToolStripMenuItem { CheckOnClick = false, Checked = StartupManager.IsEnabled() };
         _startupItem.Click += OnToggleStartup;
+#if !STORE_EDITION
         _checkForNewVersionItem = new ToolStripMenuItem { CheckOnClick = false, Checked = NewVersionPreference.IsEnabled() };
         _checkForNewVersionItem.Click += OnToggleNewVersionCheck;
         _newVersionAvailableItem = new ToolStripMenuItem { Visible = false };
         _newVersionAvailableItem.Click += (_, _) => OnNewVersionClicked();
+#endif
         _refreshItem = new ToolStripMenuItem();
         _refreshItem.Click += async (_, _) => await RefreshAsync();
         _exitItem = new ToolStripMenuItem();
@@ -93,12 +110,16 @@ public sealed class UsageTrayContext : ApplicationContext
         menu.Items.Add(_loginItem);
         menu.Items.Add(_logoutItem);
         menu.Items.Add(_startupItem);
+#if !STORE_EDITION
         menu.Items.Add(_checkForNewVersionItem);
+#endif
         menu.Items.Add(_languageMenu);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_githubItem);
         menu.Items.Add(_versionItem);
+#if !STORE_EDITION
         menu.Items.Add(_newVersionAvailableItem);
+#endif
         menu.Items.Add(_exitItem);
 
         _notifyIcon = new NotifyIcon
@@ -108,15 +129,19 @@ public sealed class UsageTrayContext : ApplicationContext
             Visible = true,
         };
         _notifyIcon.DoubleClick += async (_, _) => await RefreshAsync();
+#if !STORE_EDITION
         _notifyIcon.BalloonTipClicked += (_, _) => OnNewVersionClicked();
+#endif
 
         _timer = new System.Windows.Forms.Timer { Interval = (int)PollInterval.TotalMilliseconds };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
 
+#if !STORE_EDITION
         _newVersionCheckTimer = new System.Windows.Forms.Timer { Interval = (int)NewVersionCheckInterval.TotalMilliseconds };
         _newVersionCheckTimer.Tick += async (_, _) => await CheckForNewVersionAsync();
         _newVersionCheckTimer.Start();
+#endif
 
         Strings.LanguageChanged += async () =>
         {
@@ -127,7 +152,9 @@ public sealed class UsageTrayContext : ApplicationContext
         ApplyStaticMenuTexts();
         UpdateLoginMenuState();
         _ = RefreshAsync();
+#if !STORE_EDITION
         _ = CheckForNewVersionAsync();
+#endif
     }
 
     private void ApplyStaticMenuTexts()
@@ -140,9 +167,11 @@ public sealed class UsageTrayContext : ApplicationContext
         _loginItem.Text = Strings.MenuLogin;
         _logoutItem.Text = Strings.MenuLogout;
         _startupItem.Text = Strings.MenuStartup;
+#if !STORE_EDITION
         _checkForNewVersionItem.Text = Strings.MenuCheckForNewVersion;
         if (_availableUpdate is not null)
             _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(_availableUpdate.Version);
+#endif
         _refreshItem.Text = Strings.MenuRefresh;
         _exitItem.Text = Strings.MenuExit;
         _languageMenu.Text = Strings.MenuLanguage;
@@ -190,6 +219,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _startupItem.Checked = StartupManager.IsEnabled();
     }
 
+#if !STORE_EDITION
     private void OnToggleNewVersionCheck(object? sender, EventArgs e)
     {
         var enable = !_checkForNewVersionItem.Checked;
@@ -266,6 +296,7 @@ public sealed class UsageTrayContext : ApplicationContext
             await RefreshAsync();
         }
     }
+#endif
 
     private void UpdateLoginMenuState()
     {
@@ -393,10 +424,14 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private void ApplyTooltipText()
     {
+#if STORE_EDITION
+        _notifyIcon.Text = Truncate(_baseTooltipText, 127);
+#else
         var text = _availableUpdate is { } update
             ? $"{_baseTooltipText}\n{Strings.TooltipUpdateAvailable(update.Version)}"
             : _baseTooltipText;
         _notifyIcon.Text = Truncate(text, 127);
+#endif
     }
 
     private void MaybeWarn(UsageSnapshot snapshot)
@@ -430,7 +465,9 @@ public sealed class UsageTrayContext : ApplicationContext
         if (disposing)
         {
             _timer.Dispose();
+#if !STORE_EDITION
             _newVersionCheckTimer.Dispose();
+#endif
             _notifyIcon.Visible = false;
             _notifyIcon.Icon?.Dispose();
             _notifyIcon.Dispose();
