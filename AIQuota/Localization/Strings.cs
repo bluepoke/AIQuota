@@ -150,6 +150,25 @@ public static class Strings
     public static string WeeklyLabel(int percent, string resetSuffix) =>
         T($"Woche: {percent}%{resetSuffix}", $"Week: {percent}%{resetSuffix}");
 
+    // Built by hand rather than via CultureInfo.GetCultureInfo("de-DE") because the app runs
+    // with <InvariantGlobalization>true</InvariantGlobalization>, which only supports the
+    // invariant culture - loading any named culture throws CultureNotFoundException at runtime.
+    private static readonly NumberFormatInfo GermanNumberFormat = new()
+    {
+        NumberDecimalSeparator = ",",
+        NumberGroupSeparator = ".",
+    };
+
+    /// <summary>Formats a monetary amount with a comma decimal separator in German and a
+    /// dot in English, independent of the running system's culture (see <see cref="FormatDuration"/>
+    /// for the same rationale).</summary>
+    private static string FormatMoney(decimal amount) =>
+        amount.ToString("N2", Current == AppLanguage.German ? GermanNumberFormat : CultureInfo.InvariantCulture);
+
+    public static string CreditsLabel(decimal used, decimal limit, string currency) =>
+        T($"Nutzungsguthaben: {FormatMoney(used)} {currency} von {FormatMoney(limit)} {currency}",
+          $"Usage credits: {FormatMoney(used)} {currency} of {FormatMoney(limit)} {currency}");
+
     public static string FormatReset(DateTimeOffset? resetsAt)
     {
         if (resetsAt is not { } r)

@@ -20,6 +20,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _userItem;
     private readonly ToolStripMenuItem _sessionItem;
     private readonly ToolStripMenuItem _weeklyItem;
+    private readonly ToolStripMenuItem _creditsItem;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _loginItem;
     private readonly ToolStripMenuItem _logoutItem;
@@ -56,6 +57,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _userItem = new ToolStripMenuItem { Enabled = false, Visible = false };
         _sessionItem = new ToolStripMenuItem { Enabled = false };
         _weeklyItem = new ToolStripMenuItem { Enabled = false };
+        _creditsItem = new ToolStripMenuItem { Enabled = false, Visible = false };
         _statusItem = new ToolStripMenuItem { Enabled = false };
         _loginItem = new ToolStripMenuItem();
         _loginItem.Click += OnLoginClicked;
@@ -87,6 +89,7 @@ public sealed class UsageTrayContext : ApplicationContext
         menu.Items.Add(_userItem);
         menu.Items.Add(_sessionItem);
         menu.Items.Add(_weeklyItem);
+        menu.Items.Add(_creditsItem);
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_refreshItem);
@@ -319,6 +322,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _hasUsageSnapshot = false;
                 _sessionItem.Text = Strings.MenuSessionEmpty;
                 _weeklyItem.Text = Strings.MenuWeeklyEmpty;
+                _creditsItem.Visible = false;
                 _statusItem.Text = Strings.StatusPromptLogin;
                 UpdateLoginMenuState();
                 return;
@@ -331,6 +335,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _userItem.Visible = false;
                 _cachedAccountName = null;
                 _hasUsageSnapshot = false;
+                _creditsItem.Visible = false;
                 _statusItem.Text = Strings.StatusPleaseReauth;
                 UpdateLoginMenuState();
                 return;
@@ -355,6 +360,17 @@ public sealed class UsageTrayContext : ApplicationContext
 
         _sessionItem.Text = Strings.SessionLabel(snapshot.SessionPercent, Strings.FormatReset(snapshot.SessionResetsAt));
         _weeklyItem.Text = Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(snapshot.WeeklyResetsAt));
+
+        if (snapshot is { CreditUsed: { } creditUsed, CreditLimit: { } creditLimit, CreditCurrency: { } creditCurrency })
+        {
+            _creditsItem.Text = Strings.CreditsLabel(creditUsed, creditLimit, creditCurrency);
+            _creditsItem.Visible = true;
+        }
+        else
+        {
+            _creditsItem.Visible = false;
+        }
+
         _statusItem.Text = Strings.StatusUpdated(snapshot.FetchedAt);
 
         MaybeWarn(snapshot);

@@ -14,16 +14,33 @@ public sealed record UsageWindow(
     public int Percent => (int)Math.Round(Math.Clamp(Utilization, 0, 100));
 }
 
+public sealed record MoneyAmount(
+    [property: JsonPropertyName("amount_minor")] long AmountMinor,
+    [property: JsonPropertyName("currency")] string Currency,
+    [property: JsonPropertyName("exponent")] int Exponent)
+{
+    public decimal Value => AmountMinor / (decimal)Math.Pow(10, Exponent);
+}
+
+public sealed record UsageSpend(
+    [property: JsonPropertyName("used")] MoneyAmount? Used,
+    [property: JsonPropertyName("limit")] MoneyAmount? Limit,
+    [property: JsonPropertyName("enabled")] bool Enabled);
+
 public sealed record UsageApiResponse(
     [property: JsonPropertyName("five_hour")] UsageWindow? FiveHour,
-    [property: JsonPropertyName("seven_day")] UsageWindow? SevenDay);
+    [property: JsonPropertyName("seven_day")] UsageWindow? SevenDay,
+    [property: JsonPropertyName("spend")] UsageSpend? Spend);
 
 public sealed record UsageSnapshot(
     int SessionPercent,
     int WeeklyPercent,
     DateTimeOffset? SessionResetsAt,
     DateTimeOffset? WeeklyResetsAt,
-    DateTimeOffset FetchedAt);
+    DateTimeOffset FetchedAt,
+    decimal? CreditUsed = null,
+    decimal? CreditLimit = null,
+    string? CreditCurrency = null);
 
 public enum UsageFetchStatus
 {
@@ -64,12 +81,17 @@ public sealed class UsageApiClient(OAuthClient oauth)
             if (data is null)
                 return new UsageFetchResult(UsageFetchStatus.NetworkError, null, Strings.UsageEmptyResponse);
 
+            (MoneyAmount used, MoneyAmount limit)? spend = data.Spend is { Enabled: true, Used: { } used, Limit: { } limit } ? (used, limit) : null;
+
             var snapshot = new UsageSnapshot(
                 data.FiveHour?.Percent ?? 0,
                 data.SevenDay?.Percent ?? 0,
                 data.FiveHour?.ResetsAt,
                 data.SevenDay?.ResetsAt,
-                DateTimeOffset.Now);
+                DateTimeOffset.Now,
+                spend?.used.Value,
+                spend?.limit.Value,
+                spend?.used.Currency);
 
             return new UsageFetchResult(UsageFetchStatus.Ok, snapshot);
         }
