@@ -98,14 +98,15 @@ public static class Strings
     public static string FetchError(string error) => T($"Fehler beim Abrufen ({error})", $"Error fetching data ({error})");
     public static string StatusUpdated(DateTimeOffset time) => T($"Stand: {time:HH:mm:ss}", $"Updated: {time:HH:mm:ss}");
 
-    public static string TooltipSummary(int sessionPercent, DateTimeOffset? sessionResetsAt, int weeklyPercent, DateTimeOffset? weeklyResetsAt, DateTimeOffset fetchedAt)
+    public static string TooltipSummary(int sessionPercent, DateTimeOffset? sessionResetsAt, int weeklyPercent, DateTimeOffset? weeklyResetsAt, DateTimeOffset fetchedAt, int? creditPercent = null)
     {
         var sessionRemaining = FormatCompactRemaining(sessionResetsAt);
         var weeklyRemaining = FormatCompactRemaining(weeklyResetsAt);
         var time = fetchedAt.ToLocalTime().ToString("HH:mm");
+        var creditsLine = creditPercent is { } cp ? T($"\nGuthaben: {cp}%", $"\nCredits: {cp}%") : "";
         return T(
-            $"Claude Nutzung ({time})\nSitzung (5h): {sessionPercent}%{sessionRemaining}\nWoche: {weeklyPercent}%{weeklyRemaining}",
-            $"Claude Usage ({time})\nSession (5h): {sessionPercent}%{sessionRemaining}\nWeek: {weeklyPercent}%{weeklyRemaining}");
+            $"Claude Nutzung ({time})\nSitzung (5h): {sessionPercent}%{sessionRemaining}\nWoche: {weeklyPercent}%{weeklyRemaining}{creditsLine}",
+            $"Claude Usage ({time})\nSession (5h): {sessionPercent}%{sessionRemaining}\nWeek: {weeklyPercent}%{weeklyRemaining}{creditsLine}");
     }
 
     public static string TooltipUpdateAvailable(string version) => T($"Update verfügbar: Version {version}", $"Update available: Version {version}");

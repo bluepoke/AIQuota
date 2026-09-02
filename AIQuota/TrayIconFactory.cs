@@ -3,15 +3,15 @@ using System.Drawing.Drawing2D;
 namespace AIQuota;
 
 /// <summary>
-/// Renders the small tray icon on the fly (two stacked progress bars - session on top,
-/// weekly below) so we don't need to ship .ico assets or update them on every value
-/// change. At real tray size (commonly 16x16px) two legible 2-digit numbers don't fit,
-/// so the bars themselves - fill length plus colour - carry the at-a-glance signal;
-/// exact percentages are in the tooltip and context menu instead.
+/// Renders the small tray icon on the fly (two or three stacked progress bars - session,
+/// weekly, and, when available, usage credits) so we don't need to ship .ico assets or
+/// update them on every value change. At real tray size (commonly 16x16px) two legible
+/// 2-digit numbers don't fit, so the bars themselves - fill length plus colour - carry the
+/// at-a-glance signal; exact percentages are in the tooltip and context menu instead.
 /// </summary>
 public static class TrayIconFactory
 {
-    public static Icon CreateUsageIcon(int sessionPercent, int weeklyPercent, bool updateAvailable = false)
+    public static Icon CreateUsageIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false)
     {
         const int size = 32;
         using var bitmap = new Bitmap(size, size);
@@ -20,8 +20,7 @@ public static class TrayIconFactory
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            DrawBar(g, sessionPercent, new Rectangle(1, 2, size - 2, 13));
-            DrawBar(g, weeklyPercent, new Rectangle(1, 17, size - 2, 13));
+            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size);
 
             if (updateAvailable)
                 DrawUpdateBadge(g, size);
@@ -32,7 +31,7 @@ public static class TrayIconFactory
 
     /// <summary>Same usage bars as <see cref="CreateUsageIcon"/>, dimmed and overlaid with a
     /// spinning-refresh glyph, shown while a fetch is in flight.</summary>
-    public static Icon CreateRefreshingIcon(int sessionPercent, int weeklyPercent, bool updateAvailable = false)
+    public static Icon CreateRefreshingIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false)
     {
         const int size = 32;
         using var bitmap = new Bitmap(size, size);
@@ -41,8 +40,7 @@ public static class TrayIconFactory
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            DrawBar(g, sessionPercent, new Rectangle(1, 2, size - 2, 13));
-            DrawBar(g, weeklyPercent, new Rectangle(1, 17, size - 2, 13));
+            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size);
 
             using var dimBrush = new SolidBrush(Color.FromArgb(150, 20, 20, 20));
             g.FillRectangle(dimBrush, 0, 0, size, size);
@@ -54,6 +52,23 @@ public static class TrayIconFactory
         }
 
         return ToIcon(bitmap);
+    }
+
+    /// <summary>Draws the session/weekly bars stacked in the top two-thirds of the icon, plus
+    /// a third bar for usage credits when a value is available.</summary>
+    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, int size)
+    {
+        if (creditPercent is { } credit)
+        {
+            DrawBar(g, sessionPercent, new Rectangle(1, 1, size - 2, 9));
+            DrawBar(g, weeklyPercent, new Rectangle(1, 11, size - 2, 9));
+            DrawBar(g, credit, new Rectangle(1, 21, size - 2, 9));
+        }
+        else
+        {
+            DrawBar(g, sessionPercent, new Rectangle(1, 2, size - 2, 13));
+            DrawBar(g, weeklyPercent, new Rectangle(1, 17, size - 2, 13));
+        }
     }
 
     public static Icon CreateUnavailableIcon(bool updateAvailable = false)
