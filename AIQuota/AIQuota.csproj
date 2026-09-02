@@ -15,7 +15,7 @@
     <RootNamespace>AIQuota</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <Version>1.0.10</Version>
+    <Version>1.1.0</Version>
     <Product>AI Quota</Product>
     <AssemblyTitle>AI Quota</AssemblyTitle>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
