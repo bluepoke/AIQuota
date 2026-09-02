@@ -44,6 +44,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private bool _hasUsageSnapshot;
     private int _lastSessionPercent;
     private int _lastWeeklyPercent;
+    private int? _lastCreditPercent;
     private NewVersionInfo? _availableUpdate;
     private IconKind _currentIconKind = IconKind.Unavailable;
     private string _baseTooltipText = "";
@@ -287,7 +288,7 @@ public sealed class UsageTrayContext : ApplicationContext
             if (_hasUsageSnapshot)
             {
                 _currentIconKind = IconKind.Refreshing;
-                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, HasUpdate));
+                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate));
             }
 
             var result = await _usageApi.FetchAsync(CancellationToken.None);
@@ -320,6 +321,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _userItem.Visible = false;
                 _cachedAccountName = null;
                 _hasUsageSnapshot = false;
+                _lastCreditPercent = null;
                 _sessionItem.Text = Strings.MenuSessionEmpty;
                 _weeklyItem.Text = Strings.MenuWeeklyEmpty;
                 _creditsItem.Visible = false;
@@ -335,6 +337,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _userItem.Visible = false;
                 _cachedAccountName = null;
                 _hasUsageSnapshot = false;
+                _lastCreditPercent = null;
                 _creditsItem.Visible = false;
                 _statusItem.Text = Strings.StatusPleaseReauth;
                 UpdateLoginMenuState();
@@ -352,11 +355,17 @@ public sealed class UsageTrayContext : ApplicationContext
         _hasUsageSnapshot = true;
         _lastSessionPercent = snapshot.SessionPercent;
         _lastWeeklyPercent = snapshot.WeeklyPercent;
+
+        int? creditPercent = snapshot is { CreditUsed: { } creditUsedForPercent, CreditLimit: > 0 and { } creditLimitForPercent }
+            ? (int)Math.Round(Math.Clamp(creditUsedForPercent / creditLimitForPercent * 100m, 0, 100))
+            : null;
+        _lastCreditPercent = creditPercent;
+
         _currentIconKind = IconKind.Usage;
-        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, HasUpdate));
+        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate));
 
         SetNotifyIconText(
-            Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt));
+            Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt, creditPercent));
 
         _sessionItem.Text = Strings.SessionLabel(snapshot.SessionPercent, Strings.FormatReset(snapshot.SessionResetsAt));
         _weeklyItem.Text = Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(snapshot.WeeklyResetsAt));
@@ -391,8 +400,8 @@ public sealed class UsageTrayContext : ApplicationContext
         var icon = _currentIconKind switch
         {
             IconKind.Warning => TrayIconFactory.CreateWarningIcon(HasUpdate),
-            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, HasUpdate),
-            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, HasUpdate),
+            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate),
+            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate),
             _ => TrayIconFactory.CreateUnavailableIcon(HasUpdate),
         };
         SetIcon(icon);

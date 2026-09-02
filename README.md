@@ -11,21 +11,23 @@ limits you've used — at a glance, without opening the Claude Desktop app.
 
 ## What it does
 
-The tray icon shows two stacked bars:
+The tray icon shows two or three stacked bars:
 
 - **Top bar** — your current 5-hour session usage
-- **Bottom bar** — your current 7-day (weekly) usage
+- **Middle bar** — your current 7-day (weekly) usage
+- **Bottom bar** — your usage credit balance, shown only when your plan reports one
 
 Each bar is colour-coded (green ≤ 50%, yellow 50–80%, red > 80%) so you can tell your
 usage level without reading a number. Hover over the icon for exact percentages plus
 the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
-`Week: 82% (2d3h)`):
+`Week: 82% (2d3h)`, `Credits: 25%`):
 
-![Tooltip showing session and week usage](screenshots/claude_usage_tooltip.png)
+![Tooltip showing session, week, and credits usage](screenshots/claude_usage_tooltip.png)
 
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
-manual refresh, login/logout, run-at-startup toggle, a check-for-new-version toggle, and
-a language switch (German/English):
+usage credit balance (used/limit, when available), manual refresh, login/logout,
+run-at-startup toggle, a check-for-new-version toggle, and a language switch
+(German/English):
 
 ![Right-click menu with account, usage, and app options](screenshots/claude_usage_rmb_menu.png)
 
