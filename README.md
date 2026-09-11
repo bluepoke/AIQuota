@@ -24,10 +24,17 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 
 ![Tooltip showing session, week, and credits usage](screenshots/claude_usage_tooltip.png)
 
+A countdown frame traces the icon's rounded-square edge around the bars, split into 5
+gapped segments — one per hour of your current 5-hour session. Each full segment is an
+hour still left; the segment for the hour currently ticking away fills in gradually; so
+the number of lit segments alone tells you how many hours remain before the session
+resets, no hover needed. It can be turned off from the right-click menu if you'd rather
+keep just the bars.
+
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
 usage credit balance (used/limit, when available), manual refresh, login/logout,
-run-at-startup toggle, a check-for-new-version toggle, and a language switch
-(German/English):
+run-at-startup toggle, a session countdown ring toggle, a check-for-new-version toggle,
+and a language switch (German/English):
 
 ![Right-click menu with account, usage, and app options](screenshots/claude_usage_rmb_menu.png)
 
@@ -78,7 +85,9 @@ click the "show hidden icons" `^` arrow the first time).
 3. The icon updates with your live usage bars. Right-click any time for exact numbers,
    or hover for a quick summary.
 4. Optionally check **Run at Windows startup** so it's always there after a reboot.
-5. Switch the display language under **Language** (German/English) — it defaults to
+5. The session countdown ring (**Show session countdown ring**) is on by default;
+   uncheck it if you'd rather see just the plain usage bars.
+6. Switch the display language under **Language** (German/English) — it defaults to
    your Windows UI language and remembers your choice.
 
 The app polls for updated usage every 5 minutes while it's running (plus whenever you

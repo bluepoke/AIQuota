@@ -9,6 +9,7 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NewVersionCheckInterval = TimeSpan.FromHours(6);
+    private static readonly TimeSpan SessionWindow = TimeSpan.FromHours(5);
     private const int WarnThresholdPercent = 90;
 
     private readonly OAuthClient _oauth = new();
@@ -25,6 +26,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _loginItem;
     private readonly ToolStripMenuItem _logoutItem;
     private readonly ToolStripMenuItem _startupItem;
+    private readonly ToolStripMenuItem _showSessionRingItem;
     private readonly ToolStripMenuItem _checkForNewVersionItem;
     private readonly ToolStripMenuItem _newVersionAvailableItem;
     private readonly ToolStripMenuItem _refreshItem;
@@ -45,6 +47,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private int _lastSessionPercent;
     private int _lastWeeklyPercent;
     private int? _lastCreditPercent;
+    private DateTimeOffset? _lastSessionResetsAt;
     private NewVersionInfo? _availableUpdate;
     private IconKind _currentIconKind = IconKind.Unavailable;
     private string _baseTooltipText = "";
@@ -66,6 +69,8 @@ public sealed class UsageTrayContext : ApplicationContext
         _logoutItem.Click += OnLogoutClicked;
         _startupItem = new ToolStripMenuItem { CheckOnClick = false, Checked = StartupManager.IsEnabled() };
         _startupItem.Click += OnToggleStartup;
+        _showSessionRingItem = new ToolStripMenuItem { CheckOnClick = false, Checked = SessionRingPreference.IsEnabled() };
+        _showSessionRingItem.Click += OnToggleSessionRing;
         _checkForNewVersionItem = new ToolStripMenuItem { CheckOnClick = false, Checked = NewVersionPreference.IsEnabled() };
         _checkForNewVersionItem.Click += OnToggleNewVersionCheck;
         _newVersionAvailableItem = new ToolStripMenuItem { Visible = false };
@@ -97,6 +102,7 @@ public sealed class UsageTrayContext : ApplicationContext
         menu.Items.Add(_loginItem);
         menu.Items.Add(_logoutItem);
         menu.Items.Add(_startupItem);
+        menu.Items.Add(_showSessionRingItem);
         menu.Items.Add(_checkForNewVersionItem);
         menu.Items.Add(_languageMenu);
         menu.Items.Add(new ToolStripSeparator());
@@ -144,6 +150,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _loginItem.Text = Strings.MenuLogin;
         _logoutItem.Text = Strings.MenuLogout;
         _startupItem.Text = Strings.MenuStartup;
+        _showSessionRingItem.Text = Strings.MenuShowSessionRing;
         _checkForNewVersionItem.Text = Strings.MenuCheckForNewVersion;
         if (_availableUpdate is not null)
             _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(_availableUpdate.Version);
@@ -192,6 +199,14 @@ public sealed class UsageTrayContext : ApplicationContext
         var enable = !_startupItem.Checked;
         StartupManager.SetEnabled(enable);
         _startupItem.Checked = StartupManager.IsEnabled();
+    }
+
+    private void OnToggleSessionRing(object? sender, EventArgs e)
+    {
+        var enable = !_showSessionRingItem.Checked;
+        SessionRingPreference.SetEnabled(enable);
+        _showSessionRingItem.Checked = enable;
+        RedrawIconForCurrentState();
     }
 
     private void OnToggleNewVersionCheck(object? sender, EventArgs e)
@@ -288,7 +303,7 @@ public sealed class UsageTrayContext : ApplicationContext
             if (_hasUsageSnapshot)
             {
                 _currentIconKind = IconKind.Refreshing;
-                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate));
+                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction()));
             }
 
             var result = await _usageApi.FetchAsync(CancellationToken.None);
@@ -322,6 +337,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _cachedAccountName = null;
                 _hasUsageSnapshot = false;
                 _lastCreditPercent = null;
+                _lastSessionResetsAt = null;
                 _sessionItem.Text = Strings.MenuSessionEmpty;
                 _weeklyItem.Text = Strings.MenuWeeklyEmpty;
                 _creditsItem.Visible = false;
@@ -338,6 +354,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _cachedAccountName = null;
                 _hasUsageSnapshot = false;
                 _lastCreditPercent = null;
+                _lastSessionResetsAt = null;
                 _creditsItem.Visible = false;
                 _statusItem.Text = Strings.StatusPleaseReauth;
                 UpdateLoginMenuState();
@@ -355,6 +372,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _hasUsageSnapshot = true;
         _lastSessionPercent = snapshot.SessionPercent;
         _lastWeeklyPercent = snapshot.WeeklyPercent;
+        _lastSessionResetsAt = snapshot.SessionResetsAt;
 
         int? creditPercent = snapshot is { CreditUsed: { } creditUsedForPercent, CreditLimit: > 0 and { } creditLimitForPercent }
             ? (int)Math.Round(Math.Clamp(creditUsedForPercent / creditLimitForPercent * 100m, 0, 100))
@@ -362,7 +380,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _lastCreditPercent = creditPercent;
 
         _currentIconKind = IconKind.Usage;
-        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate));
+        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate, ComputeSessionRemainingFraction()));
 
         SetNotifyIconText(
             Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt, creditPercent));
@@ -400,11 +418,22 @@ public sealed class UsageTrayContext : ApplicationContext
         var icon = _currentIconKind switch
         {
             IconKind.Warning => TrayIconFactory.CreateWarningIcon(HasUpdate),
-            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate),
-            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate),
+            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction()),
+            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction()),
             _ => TrayIconFactory.CreateUnavailableIcon(HasUpdate),
         };
         SetIcon(icon);
+    }
+
+    /// <summary>Fraction of the 5-hour session window still left before <see cref="_lastSessionResetsAt"/>,
+    /// for the countdown ring drawn around the tray icon; null when there's no session data yet.</summary>
+    private double? ComputeSessionRemainingFraction()
+    {
+        if (!_showSessionRingItem.Checked || _lastSessionResetsAt is not { } resetsAt)
+            return null;
+
+        var remaining = resetsAt - DateTimeOffset.Now;
+        return Math.Clamp(remaining / SessionWindow, 0.0, 1.0);
     }
 
     /// <summary>Records the tooltip text for the current state and applies it, appending

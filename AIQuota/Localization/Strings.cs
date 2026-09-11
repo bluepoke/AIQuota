@@ -40,6 +40,7 @@ public static class Strings
     public static string MenuLogout => T("Abmelden", "Log out");
     public static string MenuStartup => T("Bei Windows-Start ausführen", "Run at Windows startup");
     public static string MenuCheckForNewVersion => T("Automatisch nach neuer Version suchen", "Automatically check for new version");
+    public static string MenuShowSessionRing => T("Sitzungs-Countdown-Ring anzeigen", "Show session countdown ring");
     public static string MenuNewVersionAvailable(string version) => T($"Neue Version verfügbar: v{version}", $"New version available: v{version}");
     public static string MenuRefresh => T("Jetzt aktualisieren", "Refresh now");
     public static string MenuExit => T("Beenden", "Exit");
