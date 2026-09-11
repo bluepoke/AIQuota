@@ -438,11 +438,18 @@ public sealed class UsageTrayContext : ApplicationContext
     }
 
     /// <summary>Fraction of the 5-hour session window still left before <see cref="_lastSessionResetsAt"/>,
-    /// for the countdown ring drawn around the tray icon; null when there's no session data yet.</summary>
+    /// for the countdown ring drawn around the tray icon; null when there's no session data yet
+    /// (not logged in, or no usage fetched yet). The API omits a reset time whenever no session
+    /// is currently running (no message sent since the last one expired) - that means the full
+    /// 5 hours are available the moment one starts, so the ring shows completely full rather
+    /// than disappearing.</summary>
     private double? ComputeSessionRemainingFraction()
     {
-        if (!_showSessionRingItem.Checked || _lastSessionResetsAt is not { } resetsAt)
+        if (!_showSessionRingItem.Checked || !_hasUsageSnapshot)
             return null;
+
+        if (_lastSessionResetsAt is not { } resetsAt)
+            return 1.0;
 
         var remaining = resetsAt - DateTimeOffset.Now;
         return Math.Clamp(remaining / SessionWindow, 0.0, 1.0);
