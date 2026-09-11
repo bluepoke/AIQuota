@@ -1,3 +1,4 @@
+using System.Drawing;
 using System.Drawing.Drawing2D;
 
 namespace AIQuota;
@@ -14,16 +15,17 @@ public static class TrayIconFactory
     public static Icon CreateUsageIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null)
     {
         const int size = 32;
+        var isLight = SystemTheme.IsLightTaskbar();
         using var bitmap = new Bitmap(size, size);
         using (var g = Graphics.FromImage(bitmap))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size);
+            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight);
 
             if (sessionRemainingFraction is { } fraction)
-                DrawSessionRing(g, fraction, size);
+                DrawSessionRing(g, fraction, size, isLight);
 
             if (updateAvailable)
                 DrawUpdateBadge(g, size);
@@ -37,16 +39,17 @@ public static class TrayIconFactory
     public static Icon CreateRefreshingIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null)
     {
         const int size = 32;
+        var isLight = SystemTheme.IsLightTaskbar();
         using var bitmap = new Bitmap(size, size);
         using (var g = Graphics.FromImage(bitmap))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size);
+            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight);
 
             if (sessionRemainingFraction is { } fraction)
-                DrawSessionRing(g, fraction, size);
+                DrawSessionRing(g, fraction, size, isLight);
 
             using var dimBrush = new SolidBrush(Color.FromArgb(150, 20, 20, 20));
             g.FillRectangle(dimBrush, 0, 0, size, size);
@@ -63,18 +66,18 @@ public static class TrayIconFactory
     /// <summary>Draws the session/weekly bars stacked in the middle of the icon, inset far
     /// enough from the edge to leave room for the session countdown ring, plus a third bar
     /// for usage credits when a value is available.</summary>
-    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, int size)
+    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, int size, bool isLight)
     {
         if (creditPercent is { } credit)
         {
-            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 7));
-            DrawBar(g, weeklyPercent, new Rectangle(4, 12, size - 8, 7));
-            DrawBar(g, credit, new Rectangle(4, 20, size - 8, 7));
+            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 7), isLight);
+            DrawBar(g, weeklyPercent, new Rectangle(4, 12, size - 8, 7), isLight);
+            DrawBar(g, credit, new Rectangle(4, 20, size - 8, 7), isLight);
         }
         else
         {
-            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 11));
-            DrawBar(g, weeklyPercent, new Rectangle(4, 17, size - 8, 11));
+            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 11), isLight);
+            DrawBar(g, weeklyPercent, new Rectangle(4, 17, size - 8, 11), isLight);
         }
     }
 
@@ -82,12 +85,14 @@ public static class TrayIconFactory
     /// the bars instead of a plain circle - showing how much of the current 5-hour session
     /// window is left before it resets. The outline is split into 5 gapped segments, one per
     /// hour of the session: a segment glows solid for each full hour still remaining, and the
-    /// segment for the hour currently ticking away fills partially, so the number of lit
+    /// segment for the hour currently ticking away fills partially. There's no background
+    /// track - an hour that has elapsed just isn't drawn at all - so the number of visible
     /// segments alone answers "how many hours are left" at a glance. Segments light up
     /// clockwise from top-center and go dark one by one as the reset approaches. Kept visually
-    /// distinct (white) from the green/orange/red usage bars so "time left" is never mistaken
-    /// for "quota used".</summary>
-    private static void DrawSessionRing(Graphics g, double remainingFraction, int size)
+    /// distinct from the green/orange/red usage bars so "time left" is never mistaken for
+    /// "quota used": white on a dark taskbar, and a very dark grey on a light one (<paramref
+    /// name="isLight"/>) so it keeps enough contrast either way.</summary>
+    private static void DrawSessionRing(Graphics g, double remainingFraction, int size, bool isLight)
     {
         const float penWidth = 2.4f;
         const float radius = 8f;
@@ -104,9 +109,8 @@ public static class TrayIconFactory
         var segmentLength = totalLength / segmentCount;
         var targetLength = totalLength * (float)Math.Clamp(remainingFraction, 0.0, 1.0);
 
-        using var trackPen = new Pen(Color.FromArgb(70, Color.White), penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-        //using var fillPen = new Pen(Color.FromArgb(235, 70, 160, 220), penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-        using var fillPen = new Pen(Color.FromArgb(235, Color.White), penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        var fillColor = isLight ? Color.FromArgb(235, 40, 40, 40) : Color.FromArgb(235, Color.White);
+        using var fillPen = new Pen(fillColor, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
 
         for (var i = 0; i < segmentCount; i++)
         {
@@ -115,14 +119,12 @@ public static class TrayIconFactory
             if (segmentEnd <= segmentStart)
                 continue;
 
-            var track = ExtractRange(points, segmentStart, segmentEnd);
-            if (track.Count >= 2)
-                g.DrawLines(trackPen, track.ToArray());
-
-            var filledEnd = Math.Min(segmentEnd, targetLength);
-            if (filledEnd <= segmentStart)
+            // An hour that has fully elapsed (no remaining time reaches this segment at all)
+            // disappears entirely instead of lingering as an empty track.
+            if (segmentStart >= targetLength)
                 continue;
 
+            var filledEnd = Math.Min(segmentEnd, targetLength);
             var fill = ExtractRange(points, segmentStart, filledEnd);
             if (fill.Count >= 2)
                 g.DrawLines(fillPen, fill.ToArray());
@@ -213,18 +215,21 @@ public static class TrayIconFactory
     public static Icon CreateUnavailableIcon(bool updateAvailable = false)
     {
         const int size = 32;
+        var isLight = SystemTheme.IsLightTaskbar();
         using var bitmap = new Bitmap(size, size);
         using (var g = Graphics.FromImage(bitmap))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            using var pen = new Pen(Color.FromArgb(180, 200, 200, 200), 4f);
+            var greyColor = isLight ? Color.FromArgb(200, 90, 90, 90) : Color.FromArgb(180, 200, 200, 200);
+            using var pen = new Pen(greyColor, 4f);
             var rect = new RectangleF(3, 3, size - 6, size - 6);
             g.DrawEllipse(pen, rect);
 
+            var textColor = isLight ? Color.FromArgb(230, 70, 70, 70) : Color.FromArgb(220, 200, 200, 200);
             using var font = new Font("Segoe UI", 16f, FontStyle.Bold, GraphicsUnit.Pixel);
-            using var textBrush = new SolidBrush(Color.FromArgb(220, 200, 200, 200));
+            using var textBrush = new SolidBrush(textColor);
             var textSize = g.MeasureString("?", font);
             g.DrawString("?", font, textBrush,
                 (size - textSize.Width) / 2f,
@@ -288,13 +293,14 @@ public static class TrayIconFactory
         g.DrawEllipse(border, rect);
     }
 
-    private static void DrawBar(Graphics g, int percent, Rectangle rect)
+    private static void DrawBar(Graphics g, int percent, Rectangle rect, bool isLight)
     {
         var clamped = Math.Clamp(percent, 0, 100);
         var radius = Math.Min(4, rect.Height / 2);
+        var trackColor = isLight ? Color.FromArgb(127, Color.Black) : Color.FromArgb(127, Color.White);
 
         using (var trackPath = RoundedRect(rect, radius))
-        using (var trackBrush = new SolidBrush(Color.FromArgb(127, Color.White)))
+        using (var trackBrush = new SolidBrush(trackColor))
             g.FillPath(trackBrush, trackPath);
 
         var fillWidth = Math.Max((int)Math.Round(rect.Width * clamped / 100.0), clamped > 0 ? 6 : 0);

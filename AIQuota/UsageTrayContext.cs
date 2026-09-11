@@ -134,6 +134,8 @@ public sealed class UsageTrayContext : ApplicationContext
             await RefreshAsync();
         };
 
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnSystemPreferenceChanged;
+
         ApplyStaticMenuTexts();
         UpdateLoginMenuState();
         _ = RefreshAsync();
@@ -199,6 +201,16 @@ public sealed class UsageTrayContext : ApplicationContext
         var enable = !_startupItem.Checked;
         StartupManager.SetEnabled(enable);
         _startupItem.Checked = StartupManager.IsEnabled();
+    }
+
+    /// <summary>Redraws the tray icon right away when the Windows light/dark theme changes,
+    /// so its colours (picked per-theme in <see cref="TrayIconFactory"/>) stay legible instead
+    /// of waiting for the next usage poll.</summary>
+    private void OnSystemPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
+    {
+        if (e.Category == Microsoft.Win32.UserPreferenceCategory.General ||
+            e.Category == Microsoft.Win32.UserPreferenceCategory.Color)
+            RedrawIconForCurrentState();
     }
 
     private void OnToggleSessionRing(object? sender, EventArgs e)
@@ -483,6 +495,7 @@ public sealed class UsageTrayContext : ApplicationContext
     {
         if (disposing)
         {
+            Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged;
             _timer.Dispose();
             _newVersionCheckTimer.Dispose();
             _notifyIcon.Visible = false;
