@@ -1,5 +1,6 @@
 using AIQuota.Auth;
 using AIQuota.Localization;
+using AIQuota.StreamDock;
 
 namespace AIQuota;
 
@@ -27,6 +28,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _logoutItem;
     private readonly ToolStripMenuItem _startupItem;
     private readonly ToolStripMenuItem _showSessionRingItem;
+    private readonly ToolStripMenuItem _streamDockItem;
     private readonly ToolStripMenuItem _checkForNewVersionItem;
     private readonly ToolStripMenuItem _newVersionAvailableItem;
     private readonly ToolStripMenuItem _refreshItem;
@@ -36,6 +38,9 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _languageEnglishItem;
     private readonly ToolStripMenuItem _versionItem;
     private readonly ToolStripMenuItem _githubItem;
+
+    private readonly SynchronizationContext _uiContext;
+    private StreamDockBridge? _streamDockBridge;
 
     private bool _sessionWarningShown;
     private bool _weeklyWarningShown;
@@ -56,6 +61,7 @@ public sealed class UsageTrayContext : ApplicationContext
 
     public UsageTrayContext()
     {
+        _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
         _usageApi = new UsageApiClient(_oauth);
 
         _userItem = new ToolStripMenuItem { Enabled = false, Visible = false };
@@ -71,6 +77,8 @@ public sealed class UsageTrayContext : ApplicationContext
         _startupItem.Click += OnToggleStartup;
         _showSessionRingItem = new ToolStripMenuItem { CheckOnClick = false, Checked = SessionRingPreference.IsEnabled() };
         _showSessionRingItem.Click += OnToggleSessionRing;
+        _streamDockItem = new ToolStripMenuItem { CheckOnClick = false, Checked = StreamDockPreference.IsEnabled() };
+        _streamDockItem.Click += OnToggleStreamDock;
         _checkForNewVersionItem = new ToolStripMenuItem { CheckOnClick = false, Checked = NewVersionPreference.IsEnabled() };
         _checkForNewVersionItem.Click += OnToggleNewVersionCheck;
         _newVersionAvailableItem = new ToolStripMenuItem { Visible = false };
@@ -103,6 +111,7 @@ public sealed class UsageTrayContext : ApplicationContext
         menu.Items.Add(_logoutItem);
         menu.Items.Add(_startupItem);
         menu.Items.Add(_showSessionRingItem);
+        menu.Items.Add(_streamDockItem);
         menu.Items.Add(_checkForNewVersionItem);
         menu.Items.Add(_languageMenu);
         menu.Items.Add(new ToolStripSeparator());
@@ -138,6 +147,8 @@ public sealed class UsageTrayContext : ApplicationContext
 
         ApplyStaticMenuTexts();
         UpdateLoginMenuState();
+        if (_streamDockItem.Checked)
+            StartStreamDockBridge();
         _ = RefreshAsync();
         _ = CheckForNewVersionAsync();
     }
@@ -153,6 +164,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _logoutItem.Text = Strings.MenuLogout;
         _startupItem.Text = Strings.MenuStartup;
         _showSessionRingItem.Text = Strings.MenuShowSessionRing;
+        _streamDockItem.Text = Strings.MenuEnableStreamDock;
         _checkForNewVersionItem.Text = Strings.MenuCheckForNewVersion;
         if (_availableUpdate is not null)
             _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(_availableUpdate.Version);
@@ -219,6 +231,33 @@ public sealed class UsageTrayContext : ApplicationContext
         SessionRingPreference.SetEnabled(enable);
         _showSessionRingItem.Checked = enable;
         RedrawIconForCurrentState();
+    }
+
+    private void OnToggleStreamDock(object? sender, EventArgs e)
+    {
+        var enable = !_streamDockItem.Checked;
+        StreamDockPreference.SetEnabled(enable);
+        _streamDockItem.Checked = enable;
+
+        if (enable)
+            StartStreamDockBridge();
+        else
+            StopStreamDockBridge();
+    }
+
+    private void StartStreamDockBridge()
+    {
+        if (_streamDockBridge is not null)
+            return;
+        _streamDockBridge = new StreamDockBridge(RefreshAsync, _uiContext);
+        _streamDockBridge.Start();
+        DeckStatusHolder.Current = BuildDeckStatusSnapshot();
+    }
+
+    private void StopStreamDockBridge()
+    {
+        _streamDockBridge?.Dispose();
+        _streamDockBridge = null;
     }
 
     private void OnToggleNewVersionCheck(object? sender, EventArgs e)
@@ -420,7 +459,20 @@ public sealed class UsageTrayContext : ApplicationContext
         var old = _notifyIcon.Icon;
         _notifyIcon.Icon = icon;
         old?.Dispose();
+        DeckStatusHolder.Current = BuildDeckStatusSnapshot();
     }
+
+    /// <summary>Projects the same state the tray icon was just redrawn from into a
+    /// <see cref="DeckStatusSnapshot"/>, for <see cref="StreamDockBridge"/> to serve to the
+    /// Stream Dock plugin - called from <see cref="SetIcon"/> so the two stay in sync.</summary>
+    private DeckStatusSnapshot BuildDeckStatusSnapshot() => new(
+        LoggedIn: _currentIconKind != IconKind.Unavailable,
+        IsWarning: _currentIconKind == IconKind.Warning,
+        IsRefreshing: _currentIconKind == IconKind.Refreshing,
+        SessionPercent: _lastSessionPercent,
+        WeeklyPercent: _lastWeeklyPercent,
+        CreditPercent: _lastCreditPercent,
+        SessionRemainingFraction: ComputeSessionRemainingFraction());
 
     /// <summary>Regenerates whichever icon is currently shown with the update badge added
     /// or removed, for when update availability changes independently of the next usage
@@ -505,6 +557,7 @@ public sealed class UsageTrayContext : ApplicationContext
             Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged;
             _timer.Dispose();
             _newVersionCheckTimer.Dispose();
+            _streamDockBridge?.Dispose();
             _notifyIcon.Visible = false;
             _notifyIcon.Icon?.Dispose();
             _notifyIcon.Dispose();

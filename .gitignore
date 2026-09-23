@@ -18,3 +18,9 @@ Thumbs.db
 .DS_Store
 /.vscode
 /*.bak
+
+# PyInstaller build output for the Stream Dock plugin
+streamdock-plugin/**/build/
+streamdock-plugin/**/dist/
+streamdock-plugin/**/*.exe
+__pycache__/

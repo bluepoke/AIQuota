@@ -1,0 +1,33 @@
+{
+  "Name": "AIQuota",
+  "Version": "1.0.0",
+  "Author": "Peter Kossek",
+  "Description": "Shows Claude Code session/weekly/credit usage from AIQuota and refreshes it on click.",
+  "Icon": "static/icon.png",
+  "CategoryIcon": "static/icon.png",
+  "Category": "Utilities",
+  "CodePath": "aiquota_plugin.exe",
+  "CodePathWin": "aiquota_plugin.exe",
+  "SDKVersion": 1,
+  "URL": "https://github.com/bluepoke/AIQuota",
+  "OS": [
+    { "Platform": "windows", "MinimumVersion": "7" }
+  ],
+  "Actions": [
+    {
+      "UUID": "eu.schicht8.aiquota.usage",
+      "Name": "Claude Usage",
+      "Tooltip": "Claude Code session/weekly/credit usage - click to refresh",
+      "Icon": "static/icon.png",
+      "state": 0,
+      "States": [
+        { "Image": "static/icon.png", "ShowTitle": false }
+      ],
+      "Settings": {},
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "VisibleInActionsList": true,
+      "Controllers": ["Keypad"]
+    }
+  ]
+}
