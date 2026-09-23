@@ -145,8 +145,54 @@ jobs:
           name: AIQuota-${{ steps.version.outputs.VERSION }}-win-x64-msix
           path: AIQuota-${{ steps.version.outputs.VERSION }}-win-x64.msix
 
+  build-streamdock-plugin:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: extract version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install plugin dependencies
+        working-directory: streamdock-plugin/eu.schicht8.aiquota.sdPlugin
+        run: pip install -r requirements.txt pyinstaller
+
+      # Only produces a Windows exe (no cross-compiling) - matches manifest.json's
+      # CodePath/CodePathWin, and the Stream Dock host app itself is Windows/macOS only.
+      - name: Build plugin executable
+        working-directory: streamdock-plugin/eu.schicht8.aiquota.sdPlugin
+        run: pyinstaller main.spec
+
+      - name: Stage plugin folder
+        shell: pwsh
+        run: |
+          $plugin = "streamdock-plugin/eu.schicht8.aiquota.sdPlugin"
+          Copy-Item "$plugin/dist/aiquota_plugin.exe" "$plugin/aiquota_plugin.exe"
+          Copy-Item streamdock-plugin/README.md "$plugin/README.md"
+          Remove-Item "$plugin/build", "$plugin/dist" -Recurse -Force
+
+      - name: zip artifact
+        shell: pwsh
+        run: Compress-Archive -Path streamdock-plugin/eu.schicht8.aiquota.sdPlugin -DestinationPath AIQuota-${{ steps.version.outputs.VERSION }}-streamdock-plugin.zip
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIQuota-${{ steps.version.outputs.VERSION }}-streamdock-plugin
+          path: AIQuota-${{ steps.version.outputs.VERSION }}-streamdock-plugin.zip
+
   release:
-    needs: build
+    needs: [build, build-streamdock-plugin]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts

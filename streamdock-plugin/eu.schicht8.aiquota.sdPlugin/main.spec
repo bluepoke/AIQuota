@@ -22,5 +22,4 @@ exe = EXE(
     [],
     name="aiquota_plugin",
     console=False,
-    onefile=True,
 )
