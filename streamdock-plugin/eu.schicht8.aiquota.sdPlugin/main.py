@@ -42,8 +42,12 @@ def fetch_status():
 
 
 def request_refresh():
+    # data=b"" (rather than omitted) is required: HttpListener on the AIQuota side
+    # answers a POST with no Content-Length header with 411 Length Required before our
+    # code even runs, and urllib only sends that header when data is passed - even empty.
     request = urllib.request.Request(
         f"http://127.0.0.1:{AIQUOTA_PORT}/refresh",
+        data=b"",
         headers=AIQUOTA_HEADERS,
         method="POST",
     )
