@@ -7,12 +7,10 @@ when that key is pressed.
 
 ## How it works
 
-```
-Stream Dock host app  <-- WebSocket -->  eu.schicht8.aiquota.sdPlugin (this plugin, Python)
-                                                     |
-                                                     | HTTP, 127.0.0.1:51477
-                                                     v
-                                              AIQuota.exe (StreamDockBridge.cs)
+```mermaid
+flowchart LR
+    Host["Stream Dock host app"] <-->|WebSocket| Plugin["eu.schicht8.aiquota.sdPlugin\n(this plugin, Python)"]
+    Plugin <-->|"HTTP, 127.0.0.1:51477"| Bridge["AIQuota.exe\n(StreamDockBridge.cs)"]
 ```
 
 - AIQuota renders the same bars/ring it already draws for the tray icon as a
