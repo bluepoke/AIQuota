@@ -33,8 +33,8 @@ keep just the bars.
 
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
 usage credit balance (used/limit, when available), manual refresh, login/logout,
-run-at-startup toggle, a session countdown ring toggle, a check-for-new-version toggle,
-and a language switch (German/English):
+run-at-startup toggle, a session countdown ring toggle, a Stream Dock controller toggle,
+a check-for-new-version toggle, and a language switch (German/English):
 
 ![Right-click menu with account, usage, and app options](screenshots/claude_usage_rmb_menu.png)
 
@@ -101,6 +101,15 @@ one and confirm the prompt to download, install, and restart with the new versio
 nothing happens without that confirmation. It picks the same self-contained/framework-
 dependent variant you're already running, matching Defender's usual "unknown publisher"
 warning for the manual zip route.
+
+## Stream Dock controller support
+
+Enable **Show on Stream Dock controller** from the right-click menu and a key on any
+Stream Dock-protocol device (Soomfon "Stream Controller", Ajazz, Mirabox, ... - the same
+hardware/software family under different brands) can mirror the same usage bars and
+countdown ring, and trigger a refresh on press. This needs a small companion plugin
+installed in the controller's host app - see [`streamdock-plugin/README.md`](streamdock-plugin/README.md)
+for how it works and how to install it.
 
 ## Building from source
 
