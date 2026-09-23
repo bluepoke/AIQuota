@@ -5,7 +5,7 @@
   "Description": "Shows Claude Code session/weekly/credit usage from AIQuota and refreshes it on click.",
   "Icon": "static/icon.png",
   "CategoryIcon": "static/icon.png",
-  "Category": "Utilities",
+  "Category": "AIQuota",
   "CodePath": "aiquota_plugin.exe",
   "CodePathWin": "aiquota_plugin.exe",
   "SDKVersion": 1,
@@ -16,7 +16,7 @@
   "Actions": [
     {
       "UUID": "eu.schicht8.aiquota.usage",
-      "Name": "Claude Usage",
+      "Name": "AIQuota",
       "Tooltip": "Claude Code session/weekly/credit usage - click to refresh",
       "Icon": "static/icon.png",
       "state": 0,
