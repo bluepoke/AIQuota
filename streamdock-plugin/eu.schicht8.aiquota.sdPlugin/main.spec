@@ -22,4 +22,5 @@ exe = EXE(
     [],
     name="aiquota_plugin",
     console=False,
+    icon="icon.ico",
 )
