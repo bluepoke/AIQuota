@@ -38,6 +38,8 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _languageEnglishItem;
     private readonly ToolStripMenuItem _versionItem;
     private readonly ToolStripMenuItem _githubItem;
+    private readonly ToolStripMenuItem _settingsMenu;
+    private readonly ToolStripMenuItem _aboutMenu;
 
     private readonly SynchronizationContext _uiContext;
     private StreamDockBridge? _streamDockBridge;
@@ -99,6 +101,17 @@ public sealed class UsageTrayContext : ApplicationContext
         _githubItem.Click += (_, _) =>
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(AppInfo.RepositoryUrl) { UseShellExecute = true });
 
+        _settingsMenu = new ToolStripMenuItem();
+        _settingsMenu.DropDownItems.Add(_startupItem);
+        _settingsMenu.DropDownItems.Add(_showSessionRingItem);
+        _settingsMenu.DropDownItems.Add(_streamDockItem);
+        _settingsMenu.DropDownItems.Add(_checkForNewVersionItem);
+        _settingsMenu.DropDownItems.Add(_languageMenu);
+
+        _aboutMenu = new ToolStripMenuItem();
+        _aboutMenu.DropDownItems.Add(_githubItem);
+        _aboutMenu.DropDownItems.Add(_versionItem);
+
         var menu = new ContextMenuStrip();
         menu.Items.Add(_userItem);
         menu.Items.Add(_sessionItem);
@@ -109,14 +122,9 @@ public sealed class UsageTrayContext : ApplicationContext
         menu.Items.Add(_refreshItem);
         menu.Items.Add(_loginItem);
         menu.Items.Add(_logoutItem);
-        menu.Items.Add(_startupItem);
-        menu.Items.Add(_showSessionRingItem);
-        menu.Items.Add(_streamDockItem);
-        menu.Items.Add(_checkForNewVersionItem);
-        menu.Items.Add(_languageMenu);
+        menu.Items.Add(_settingsMenu);
+        menu.Items.Add(_aboutMenu);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(_githubItem);
-        menu.Items.Add(_versionItem);
         menu.Items.Add(_newVersionAvailableItem);
         menu.Items.Add(_exitItem);
 
@@ -175,6 +183,8 @@ public sealed class UsageTrayContext : ApplicationContext
         _languageEnglishItem.Checked = Strings.Current == AppLanguage.English;
         _versionItem.Text = Strings.VersionLabel(AppInfo.Version);
         _githubItem.Text = Strings.MenuGitHub;
+        _settingsMenu.Text = Strings.MenuSettings;
+        _aboutMenu.Text = Strings.MenuAbout;
         SetNotifyIconText(Strings.TooltipNotLoggedIn);
     }
 

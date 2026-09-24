@@ -50,6 +50,8 @@ public static class Strings
     public static string MenuLanguageEnglish => "English";
     public static string VersionLabel(string version) => T($"Version {version}", $"Version {version}");
     public static string MenuGitHub => T("GitHub-Seite öffnen", "Open GitHub page");
+    public static string MenuSettings => T("Einstellungen", "Settings");
+    public static string MenuAbout => T("Über", "About");
 
     public static string TooltipNotLoggedIn => T("Claude Nutzung – nicht angemeldet", "Claude Usage – not logged in");
     public static string TooltipLoggingIn => T(
