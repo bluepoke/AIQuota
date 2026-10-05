@@ -9,7 +9,7 @@ when that key is pressed.
 
 ```mermaid
 flowchart LR
-    Host["Stream Dock host app"] <-->|WebSocket| Plugin["eu.schicht8.aiquota.sdPlugin\n(this plugin, Python)"]
+    Host["Stream Dock host app\n(loads plugin/index.html\ndirectly in its own runtime)"] <-->|WebSocket| Plugin["plugin/index.js"]
     Plugin <-->|"HTTP, 127.0.0.1:51477"| Bridge["AIQuota.exe\n(StreamDockBridge.cs)"]
 ```
 
@@ -19,11 +19,16 @@ flowchart LR
   [`AIQuota/StreamDock/StreamDockBridge.cs`](../AIQuota/StreamDock/StreamDockBridge.cs).
   A `POST /refresh` there triggers the same refresh the tray's "Refresh now"
   menu entry does.
-- This plugin is a normal Stream Dock plugin (per the
+- This is a normal Stream Dock JavaScript plugin (per the
   [official SDK](https://github.com/MiraboxSpace/StreamDock-Plugin-SDK) /
-  [docs](https://sdk.key123.vip/en/)) that polls `/status` every 4 seconds
-  while its key is visible and pushes the image it gets back onto the key via
-  `setImage`, and calls `/refresh` on `keyDown`.
+  [docs](https://sdk.key123.vip/en/)): `manifest.json`'s `CodePath` points at
+  `plugin/index.html`, which the Stream Dock host loads directly inside its
+  own embedded runtime - there's no separate executable or build step. The
+  plugin's JS (`plugin/index.js`) polls `/status` every 4 seconds while its
+  key is visible and pushes the image it gets back onto the key via
+  `setImage`, and calls `/refresh` on `keyDown`, using the bundled `axios`
+  HTTP client (`plugin/utils/axios.js`, vendored from the SDK's own
+  template).
 - The two only talk to each other via `127.0.0.1` - no pairing, no vendor
   HID/USB protocol, no Companion/OpenDeck middleware.
 
@@ -33,21 +38,12 @@ controller"** (off by default, since it opens a local port).
 ## Setup
 
 1. In AIQuota's tray menu, enable **"Show on Stream Dock controller"**.
-2. Build the plugin executable (Windows, since that's what `manifest.json`'s
-   `CodePathWin` points at):
-   ```
-   cd streamdock-plugin/eu.schicht8.aiquota.sdPlugin
-   pip install -r requirements.txt pyinstaller
-   pyinstaller main.spec
-   copy dist\aiquota_plugin.exe .
-   ```
-3. Copy the whole `eu.schicht8.aiquota.sdPlugin` folder (with
-   `aiquota_plugin.exe` now inside it) into the Stream Dock host app's plugin
-   directory:
+2. Copy the whole `eu.schicht8.aiquota.sdPlugin` folder as-is into the Stream
+   Dock host app's plugin directory (no build step - it's plain JS/HTML):
    ```
    %AppData%\HotSpot\StreamDock\plugins\
    ```
-4. Restart the Stream Dock host app (it only scans the plugins folder on
+3. Restart the Stream Dock host app (it only scans the plugins folder on
    startup). The action shows up as "AIQuota" / "Claude Usage" in its action
    list - drag it onto a key.
 
@@ -58,7 +54,10 @@ controller"** (off by default, since it opens a local port).
   a physical Soomfon "Stream Controller Classic" - I don't have one to test
   end-to-end. If the key doesn't update, open the host app's plugin debug
   console at `http://localhost:23519/` and check this plugin's log output.
-- `aiquota_plugin.exe` isn't checked in (it's a build artifact); run the
-  PyInstaller step above after every change to `main.py`.
 - The bridge's port (51477) is fixed and shared between
-  `StreamDockBridge.cs` and `main.py` - if you change one, change the other.
+  `StreamDockBridge.cs` and `plugin/index.js` - if you change one, change
+  the other.
+- `plugin/utils/common.js`, `plugin/utils/worker.js` and
+  `plugin/utils/axios.js` are vendored verbatim from the SDK's own
+  [JavaScript plugin template](https://github.com/MiraboxSpace/StreamDock-Plugin-SDK/tree/main/SDJavaScriptSDK/com.mirabox.streamdock.xxx.sdPlugin) -
+  don't hand-edit them, re-fetch from there instead if the SDK updates.

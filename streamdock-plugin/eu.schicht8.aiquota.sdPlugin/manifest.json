@@ -6,8 +6,7 @@
   "Icon": "static/icon.png",
   "CategoryIcon": "static/icon.png",
   "Category": "AIQuota",
-  "CodePath": "aiquota_plugin.exe",
-  "CodePathWin": "aiquota_plugin.exe",
+  "CodePath": "plugin/index.html",
   "SDKVersion": 1,
   "URL": "https://github.com/bluepoke/AIQuota",
   "OS": [

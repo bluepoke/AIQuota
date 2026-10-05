@@ -146,44 +146,22 @@ jobs:
           path: AIQuota-${{ steps.version.outputs.VERSION }}-win-x64.msix
 
   build-streamdock-plugin:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: extract version from tag
         id: version
-        shell: pwsh
-        run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
-          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install plugin dependencies
-        working-directory: streamdock-plugin/eu.schicht8.aiquota.sdPlugin
-        run: pip install -r requirements.txt pyinstaller
-
-      # Only produces a Windows exe (no cross-compiling) - matches manifest.json's
-      # CodePath/CodePathWin, and the Stream Dock host app itself is Windows/macOS only.
-      - name: Build plugin executable
-        working-directory: streamdock-plugin/eu.schicht8.aiquota.sdPlugin
-        run: pyinstaller main.spec
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Stage plugin folder
-        shell: pwsh
-        run: |
-          $plugin = "streamdock-plugin/eu.schicht8.aiquota.sdPlugin"
-          Copy-Item "$plugin/dist/aiquota_plugin.exe" "$plugin/aiquota_plugin.exe"
-          Copy-Item streamdock-plugin/README.md "$plugin/README.md"
-          Remove-Item "$plugin/build", "$plugin/dist" -Recurse -Force
+        run: cp streamdock-plugin/README.md streamdock-plugin/eu.schicht8.aiquota.sdPlugin/README.md
 
       - name: zip artifact
-        shell: pwsh
-        run: Compress-Archive -Path streamdock-plugin/eu.schicht8.aiquota.sdPlugin -DestinationPath AIQuota-${{ steps.version.outputs.VERSION }}-streamdock-plugin.zip
+        run: |
+          cd streamdock-plugin
+          zip -r ../AIQuota-${{ steps.version.outputs.VERSION }}-streamdock-plugin.zip eu.schicht8.aiquota.sdPlugin
 
       - name: upload artifact
         uses: actions/upload-artifact@v4
