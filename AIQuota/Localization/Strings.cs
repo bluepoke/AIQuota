@@ -63,6 +63,11 @@ public static class Strings
     public static string ConfirmUpdatePrompt(string version) => T(
         $"Version {version} ist verfügbar. Jetzt herunterladen, installieren und die App neu starten?",
         $"Version {version} is available. Download, install it, and restart the app now?");
+    public static string ConfirmUpdateYes => T("Installieren", "Install");
+    public static string ConfirmUpdateNo => T("Abbrechen", "Cancel");
+    public static string ChangelogHeader(string previousVersion) => T(
+        $"Änderungen seit Version {previousVersion}:", $"Changes since version {previousVersion}:");
+    public static string NoChangelogAvailable => T("Keine Änderungsliste verfügbar.", "No changelog available.");
     public static string UpdateFailed(string message) => T($"Update fehlgeschlagen:\n{message}", $"Update failed:\n{message}");
 
     public static string StatusPromptLogin => T("Rechtsklick > Anmelden", "Right-click > Log in");

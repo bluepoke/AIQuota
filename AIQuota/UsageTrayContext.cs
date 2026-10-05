@@ -321,12 +321,7 @@ public sealed class UsageTrayContext : ApplicationContext
         if (_availableUpdate is not { } update || _updateInProgress)
             return;
 
-        var confirmed = MessageBox.Show(
-            Strings.ConfirmUpdatePrompt(update.Version),
-            Strings.AppTitle,
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question) == DialogResult.Yes;
-        if (!confirmed)
+        if (!UpdateConfirmDialog.Confirm(update))
             return;
 
         _updateInProgress = true;
