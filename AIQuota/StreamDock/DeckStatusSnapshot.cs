@@ -11,4 +11,5 @@ public sealed record DeckStatusSnapshot(
     int SessionPercent,
     int WeeklyPercent,
     int? CreditPercent,
-    double? SessionRemainingFraction);
+    double? SessionRemainingFraction,
+    bool SessionNotStarted);

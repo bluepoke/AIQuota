@@ -9,7 +9,8 @@ internal static class DeckStatusHolder
 {
     private static readonly DeckStatusSnapshot LoggedOut = new(
         LoggedIn: false, IsWarning: false, IsRefreshing: false,
-        SessionPercent: 0, WeeklyPercent: 0, CreditPercent: null, SessionRemainingFraction: null);
+        SessionPercent: 0, WeeklyPercent: 0, CreditPercent: null, SessionRemainingFraction: null,
+        SessionNotStarted: false);
 
     public static DeckStatusSnapshot Current { get; set; } = LoggedOut;
 }

@@ -109,7 +109,7 @@ public static class Strings
 
     public static string TooltipSummary(int sessionPercent, DateTimeOffset? sessionResetsAt, int weeklyPercent, DateTimeOffset? weeklyResetsAt, DateTimeOffset fetchedAt, int? creditPercent = null)
     {
-        var sessionRemaining = FormatCompactRemaining(sessionResetsAt);
+        var sessionRemaining = sessionResetsAt is null ? SessionNotStartedSuffix : FormatCompactRemaining(sessionResetsAt);
         var weeklyRemaining = FormatCompactRemaining(weeklyResetsAt);
         var time = fetchedAt.ToLocalTime().ToString("HH:mm");
         var creditsLine = creditPercent is { } cp ? T($"\nGuthaben: {cp}%", $"\nCredits: {cp}%") : "";
@@ -154,6 +154,10 @@ public static class Strings
 
     private static string WeekdayName(DateTimeOffset local) =>
         (Current == AppLanguage.German ? WeekdaysDe : WeekdaysEn)[(int)local.DayOfWeek];
+
+    /// <summary>Appended to the session percentage, in the tooltip and the context menu, while
+    /// no 5-hour session is running.</summary>
+    public static string SessionNotStartedSuffix => T(" (nicht gestartet)", " (not started)");
 
     public static string SessionLabel(int percent, string resetSuffix) =>
         T($"Sitzung (5h): {percent}%{resetSuffix}", $"Session (5h): {percent}%{resetSuffix}");

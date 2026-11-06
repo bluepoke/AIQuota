@@ -12,7 +12,10 @@ namespace AIQuota;
 /// </summary>
 public static class TrayIconFactory
 {
-    public static Icon CreateUsageIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null)
+    /// <param name="sessionNotStarted">No 5-hour session is running yet (the API reported no
+    /// reset time): the session bar is drawn as an outline only and the countdown ring dimmed,
+    /// so a session that hasn't started can't be mistaken for one that just started.</param>
+    public static Icon CreateUsageIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null, bool sessionNotStarted = false)
     {
         const int size = 32;
         var isLight = SystemTheme.IsLightTaskbar();
@@ -22,10 +25,10 @@ public static class TrayIconFactory
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight);
+            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight, sessionNotStarted);
 
             if (sessionRemainingFraction is { } fraction)
-                DrawSessionRing(g, fraction, size, isLight);
+                DrawSessionRing(g, fraction, size, isLight, sessionNotStarted);
 
             if (updateAvailable)
                 DrawUpdateBadge(g, size);
@@ -36,7 +39,7 @@ public static class TrayIconFactory
 
     /// <summary>Same usage bars as <see cref="CreateUsageIcon"/>, dimmed and overlaid with a
     /// spinning-refresh glyph, shown while a fetch is in flight.</summary>
-    public static Icon CreateRefreshingIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null)
+    public static Icon CreateRefreshingIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null, bool sessionNotStarted = false)
     {
         const int size = 32;
         var isLight = SystemTheme.IsLightTaskbar();
@@ -46,10 +49,10 @@ public static class TrayIconFactory
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight);
+            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight, sessionNotStarted);
 
             if (sessionRemainingFraction is { } fraction)
-                DrawSessionRing(g, fraction, size, isLight);
+                DrawSessionRing(g, fraction, size, isLight, sessionNotStarted);
 
             using var dimBrush = new SolidBrush(Color.FromArgb(150, 20, 20, 20));
             g.FillRectangle(dimBrush, 0, 0, size, size);
@@ -65,18 +68,19 @@ public static class TrayIconFactory
 
     /// <summary>Draws the session/weekly bars stacked in the middle of the icon, inset far
     /// enough from the edge to leave room for the session countdown ring, plus a third bar
-    /// for usage credits when a value is available.</summary>
-    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, int size, bool isLight)
+    /// for usage credits when a value is available. The session bar's track is drawn as an
+    /// outline only while <paramref name="sessionNotStarted"/>.</summary>
+    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, int size, bool isLight, bool sessionNotStarted)
     {
         if (creditPercent is { } credit)
         {
-            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 7), isLight);
+            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 7), isLight, sessionNotStarted);
             DrawBar(g, weeklyPercent, new Rectangle(4, 12, size - 8, 7), isLight);
             DrawBar(g, credit, new Rectangle(4, 20, size - 8, 7), isLight);
         }
         else
         {
-            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 11), isLight);
+            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 11), isLight, sessionNotStarted);
             DrawBar(g, weeklyPercent, new Rectangle(4, 17, size - 8, 11), isLight);
         }
     }
@@ -91,8 +95,10 @@ public static class TrayIconFactory
     /// clockwise from top-center and go dark one by one as the reset approaches. Kept visually
     /// distinct from the green/orange/red usage bars so "time left" is never mistaken for
     /// "quota used": white on a dark taskbar, and a very dark grey on a light one (<paramref
-    /// name="isLight"/>) so it keeps enough contrast either way.</summary>
-    private static void DrawSessionRing(Graphics g, double remainingFraction, int size, bool isLight)
+    /// name="isLight"/>) so it keeps enough contrast either way. While <paramref
+    /// name="notStarted"/> the segments are drawn dimmed: all 5 hours are still available, but
+    /// the clock isn't ticking yet.</summary>
+    private static void DrawSessionRing(Graphics g, double remainingFraction, int size, bool isLight, bool notStarted)
     {
         const float penWidth = 2.4f;
         const float radius = 8f;
@@ -109,7 +115,9 @@ public static class TrayIconFactory
         var segmentLength = totalLength / segmentCount;
         var targetLength = totalLength * (float)Math.Clamp(remainingFraction, 0.0, 1.0);
 
-        var fillColor = isLight ? Color.FromArgb(235, 40, 40, 40) : Color.FromArgb(235, Color.White);
+        var fillColor = notStarted
+            ? NotStartedColor(isLight)
+            : isLight ? Color.FromArgb(235, 40, 40, 40) : Color.FromArgb(235, Color.White);
         using var fillPen = new Pen(fillColor, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
 
         for (var i = 0; i < segmentCount; i++)
@@ -293,15 +301,28 @@ public static class TrayIconFactory
         g.DrawEllipse(border, rect);
     }
 
-    private static void DrawBar(Graphics g, int percent, Rectangle rect, bool isLight)
+    /// <param name="outlineOnly">Draw the track as an outline instead of a filled shape - used
+    /// for the session bar while no session has started yet.</param>
+    private static void DrawBar(Graphics g, int percent, Rectangle rect, bool isLight, bool outlineOnly = false)
     {
         var clamped = Math.Clamp(percent, 0, 100);
         var radius = Math.Min(4, rect.Height / 2);
-        var trackColor = isLight ? Color.FromArgb(127, Color.Black) : Color.FromArgb(127, Color.White);
 
-        using (var trackPath = RoundedRect(rect, radius))
-        using (var trackBrush = new SolidBrush(trackColor))
+        if (outlineOnly)
+        {
+            const float outlineWidth = 2f;
+            var inset = RectangleF.Inflate(rect, -outlineWidth / 2f, -outlineWidth / 2f);
+            using var outlinePath = RoundedRect(inset, radius - outlineWidth / 2f);
+            using var outlinePen = new Pen(NotStartedColor(isLight), outlineWidth);
+            g.DrawPath(outlinePen, outlinePath);
+        }
+        else
+        {
+            var trackColor = isLight ? Color.FromArgb(127, Color.Black) : Color.FromArgb(127, Color.White);
+            using var trackPath = RoundedRect(rect, radius);
+            using var trackBrush = new SolidBrush(trackColor);
             g.FillPath(trackBrush, trackPath);
+        }
 
         var fillWidth = Math.Max((int)Math.Round(rect.Width * clamped / 100.0), clamped > 0 ? 6 : 0);
         if (fillWidth > 0)
@@ -346,9 +367,9 @@ public static class TrayIconFactory
         g.FillPolygon(brush, [tip, wing1, wing2]);
     }
 
-    private static GraphicsPath RoundedRect(Rectangle rect, int radius)
+    private static GraphicsPath RoundedRect(RectangleF rect, float radius)
     {
-        var d = radius * 2;
+        var d = radius * 2f;
         var path = new GraphicsPath();
         path.AddArc(rect.X, rect.Y, d, d, 180, 90);
         path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
@@ -357,6 +378,11 @@ public static class TrayIconFactory
         path.CloseFigure();
         return path;
     }
+
+    /// <summary>Dimmed colour shared by the countdown ring and the session bar outline while
+    /// no session has started, so both read as "available, but not active".</summary>
+    private static Color NotStartedColor(bool isLight) =>
+        isLight ? Color.FromArgb(90, 40, 40, 40) : Color.FromArgb(80, Color.White);
 
     private static Color ColorForPercent(int percent) => percent switch
     {
