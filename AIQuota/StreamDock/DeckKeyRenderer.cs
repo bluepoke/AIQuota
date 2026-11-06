@@ -22,6 +22,10 @@ internal static class DeckKeyRenderer
 
     private static readonly Color Background = Color.FromArgb(255, 28, 28, 30);
 
+    /// <summary>The tray icon's dimmed "session not started" colour (dark branch), shared by
+    /// the countdown ring and the session bar outline.</summary>
+    private static readonly Color NotStartedColor = Color.FromArgb(80, Color.White);
+
     public static byte[] Render(DeckStatusSnapshot snapshot)
     {
         using var bitmap = new Bitmap(Size, Size);
@@ -41,10 +45,10 @@ internal static class DeckKeyRenderer
             }
             else
             {
-                DrawBars(g, snapshot.SessionPercent, snapshot.WeeklyPercent, snapshot.CreditPercent);
+                DrawBars(g, snapshot.SessionPercent, snapshot.WeeklyPercent, snapshot.CreditPercent, snapshot.SessionNotStarted);
 
                 if (snapshot.SessionRemainingFraction is { } fraction)
-                    DrawSessionRing(g, fraction);
+                    DrawSessionRing(g, fraction, snapshot.SessionNotStarted);
 
                 if (snapshot.IsRefreshing)
                 {
@@ -62,32 +66,44 @@ internal static class DeckKeyRenderer
     /// <summary>Same layout as <see cref="TrayIconFactory"/>'s DrawBars: two bars, or three
     /// when a credit percentage is available, stacked in the middle of the icon inset far
     /// enough to leave room for the session countdown ring.</summary>
-    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent)
+    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, bool sessionNotStarted)
     {
         if (creditPercent is { } credit)
         {
-            DrawBar(g, "Session", sessionPercent, new RectangleF(4 * Scale, 4 * Scale, (Size - 8 * Scale), 7 * Scale));
+            DrawBar(g, "Session", sessionPercent, new RectangleF(4 * Scale, 4 * Scale, (Size - 8 * Scale), 7 * Scale), sessionNotStarted);
             DrawBar(g, "Week", weeklyPercent, new RectangleF(4 * Scale, 12 * Scale, (Size - 8 * Scale), 7 * Scale));
             DrawBar(g, "Credit", credit, new RectangleF(4 * Scale, 20 * Scale, (Size - 8 * Scale), 7 * Scale));
         }
         else
         {
-            DrawBar(g, "Session", sessionPercent, new RectangleF(4 * Scale, 4 * Scale, (Size - 8 * Scale), 11 * Scale));
+            DrawBar(g, "Session", sessionPercent, new RectangleF(4 * Scale, 4 * Scale, (Size - 8 * Scale), 11 * Scale), sessionNotStarted);
             DrawBar(g, "Week", weeklyPercent, new RectangleF(4 * Scale, 17 * Scale, (Size - 8 * Scale), 11 * Scale));
         }
     }
 
     /// <summary>Same track/fill geometry and colour-for-percent as <see
-    /// cref="TrayIconFactory"/>'s DrawBar, plus - since a bar is now tall enough to hold it -
-    /// the label and percentage as one centered line ("Session 45%").</summary>
-    private static void DrawBar(Graphics g, string label, int percent, RectangleF rect)
+    /// cref="TrayIconFactory"/>'s DrawBar (including its outline-only track for a session
+    /// that hasn't started), plus - since a bar is now tall enough to hold it - the label and
+    /// percentage as one centered line ("Session 45%").</summary>
+    private static void DrawBar(Graphics g, string label, int percent, RectangleF rect, bool outlineOnly = false)
     {
         var clamped = Math.Clamp(percent, 0, 100);
         var radius = Math.Min(4f * Scale, rect.Height / 2f);
 
-        using (var trackPath = RoundedRect(rect, radius))
-        using (var trackBrush = new SolidBrush(Color.FromArgb(127, Color.White)))
+        if (outlineOnly)
+        {
+            const float outlineWidth = 2f * Scale;
+            var inset = RectangleF.Inflate(rect, -outlineWidth / 2f, -outlineWidth / 2f);
+            using var outlinePath = RoundedRect(inset, radius - outlineWidth / 2f);
+            using var outlinePen = new Pen(NotStartedColor, outlineWidth);
+            g.DrawPath(outlinePen, outlinePath);
+        }
+        else
+        {
+            using var trackPath = RoundedRect(rect, radius);
+            using var trackBrush = new SolidBrush(Color.FromArgb(127, Color.White));
             g.FillPath(trackBrush, trackPath);
+        }
 
         var fillWidth = Math.Max(rect.Width * clamped / 100f, clamped > 0 ? 6f * Scale : 0f);
         if (fillWidth > 0)
@@ -98,17 +114,31 @@ internal static class DeckKeyRenderer
             g.FillPath(fillBrush, fillPath);
         }
 
-        using var font = new Font("Segoe UI", Math.Min(rect.Height * 0.42f, 34f), FontStyle.Bold, GraphicsUnit.Pixel);
+        using var format = new StringFormat(StringFormatFlags.NoWrap) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        using var font = new Font("Segoe UI", FitFontSize(g, rect, format), FontStyle.Bold, GraphicsUnit.Pixel);
         using var textBrush = new SolidBrush(Color.White);
-        using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         g.DrawString($"{label} {clamped}%", font, textBrush, rect, format);
+    }
+
+    /// <summary>Font size for a bar's text: as tall as the bar allows, shrunk so the widest
+    /// possible text ("Session 100%") still fits on one line - so every bar gets the same
+    /// size and it doesn't jump as percentages change.</summary>
+    private static float FitFontSize(Graphics g, RectangleF rect, StringFormat format)
+    {
+        const string widestText = "Session 100%";
+        var size = Math.Min(rect.Height * 0.42f, 34f);
+        var available = rect.Width - 2 * 2f * Scale;
+
+        using var probe = new Font("Segoe UI", size, FontStyle.Bold, GraphicsUnit.Pixel);
+        var width = g.MeasureString(widestText, probe, PointF.Empty, format).Width;
+        return width > available ? size * available / width : size;
     }
 
     /// <summary>Exact copy of <see cref="TrayIconFactory"/>'s countdown ring - a gapped,
     /// 5-segment outline tracing a rounded square, clockwise from top-center - scaled up;
     /// see that method for the full rationale. Always the "dark taskbar" (white) colour
     /// branch, since a deck key has no taskbar theme to match.</summary>
-    private static void DrawSessionRing(Graphics g, double remainingFraction)
+    private static void DrawSessionRing(Graphics g, double remainingFraction, bool notStarted)
     {
         const float penWidth = 2.4f * Scale;
         const float radius = 8f * Scale;
@@ -125,7 +155,7 @@ internal static class DeckKeyRenderer
         var segmentLength = totalLength / segmentCount;
         var targetLength = totalLength * (float)Math.Clamp(remainingFraction, 0.0, 1.0);
 
-        using var fillPen = new Pen(Color.FromArgb(235, Color.White), penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var fillPen = new Pen(notStarted ? NotStartedColor : Color.FromArgb(235, Color.White), penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
 
         for (var i = 0; i < segmentCount; i++)
         {

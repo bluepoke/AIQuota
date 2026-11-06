@@ -61,6 +61,10 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private bool HasUpdate => _availableUpdate is not null;
 
+    /// <summary>The API omits the session reset time whenever no 5-hour session is currently
+    /// running (no message sent since the last one expired).</summary>
+    private bool SessionNotStarted => _hasUsageSnapshot && _lastSessionResetsAt is null;
+
     public UsageTrayContext()
     {
         _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
@@ -359,7 +363,7 @@ public sealed class UsageTrayContext : ApplicationContext
             if (_hasUsageSnapshot)
             {
                 _currentIconKind = IconKind.Refreshing;
-                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction()));
+                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction(), SessionNotStarted));
             }
 
             var result = await _usageApi.FetchAsync(CancellationToken.None);
@@ -436,12 +440,13 @@ public sealed class UsageTrayContext : ApplicationContext
         _lastCreditPercent = creditPercent;
 
         _currentIconKind = IconKind.Usage;
-        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate, ComputeSessionRemainingFraction()));
+        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate, ComputeSessionRemainingFraction(), SessionNotStarted));
 
         SetNotifyIconText(
             Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt, creditPercent));
 
-        _sessionItem.Text = Strings.SessionLabel(snapshot.SessionPercent, Strings.FormatReset(snapshot.SessionResetsAt));
+        _sessionItem.Text = Strings.SessionLabel(snapshot.SessionPercent,
+            SessionNotStarted ? Strings.SessionNotStartedSuffix : Strings.FormatReset(snapshot.SessionResetsAt));
         _weeklyItem.Text = Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(snapshot.WeeklyResetsAt));
 
         if (snapshot is { CreditUsed: { } creditUsed, CreditLimit: { } creditLimit, CreditCurrency: { } creditCurrency })
@@ -477,7 +482,8 @@ public sealed class UsageTrayContext : ApplicationContext
         SessionPercent: _lastSessionPercent,
         WeeklyPercent: _lastWeeklyPercent,
         CreditPercent: _lastCreditPercent,
-        SessionRemainingFraction: ComputeSessionRemainingFraction());
+        SessionRemainingFraction: ComputeSessionRemainingFraction(),
+        SessionNotStarted: SessionNotStarted);
 
     /// <summary>Regenerates whichever icon is currently shown with the update badge added
     /// or removed, for when update availability changes independently of the next usage
@@ -487,8 +493,8 @@ public sealed class UsageTrayContext : ApplicationContext
         var icon = _currentIconKind switch
         {
             IconKind.Warning => TrayIconFactory.CreateWarningIcon(HasUpdate),
-            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction()),
-            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction()),
+            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction(), SessionNotStarted),
+            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction(), SessionNotStarted),
             _ => TrayIconFactory.CreateUnavailableIcon(HasUpdate),
         };
         SetIcon(icon);
@@ -498,8 +504,8 @@ public sealed class UsageTrayContext : ApplicationContext
     /// for the countdown ring drawn around the tray icon; null when there's no session data yet
     /// (not logged in, or no usage fetched yet). The API omits a reset time whenever no session
     /// is currently running (no message sent since the last one expired) - that means the full
-    /// 5 hours are available the moment one starts, so the ring shows completely full rather
-    /// than disappearing.</summary>
+    /// 5 hours are available the moment one starts, so the ring shows completely full (drawn
+    /// dimmed, see <see cref="SessionNotStarted"/>) rather than disappearing.</summary>
     private double? ComputeSessionRemainingFraction()
     {
         if (!_showSessionRingItem.Checked || !_hasUsageSnapshot)
