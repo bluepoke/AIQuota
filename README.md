@@ -24,13 +24,6 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 
 ![Tooltip showing session, week, and credits usage](screenshots/claude_usage_tooltip.png)
 
-A countdown frame traces the icon's rounded-square edge around the bars, split into 5
-gapped segments — one per hour of your current 5-hour session. Each full segment is an
-hour still left; the segment for the hour currently ticking away fills in gradually; so
-the number of lit segments alone tells you how many hours remain before the session
-resets, no hover needed. It can be turned off from the right-click menu if you'd rather
-keep just the bars.
-
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
 usage credit balance (used/limit, when available), manual refresh, login/logout,
 run-at-startup toggle, a session countdown ring toggle, a Stream Dock controller toggle,
@@ -46,6 +39,43 @@ your Windows user account only.
 
 If your usage crosses 90% for either window, you'll get a one-time balloon
 notification.
+
+### Session countdown ring
+
+A countdown frame traces the icon's rounded-square edge around the bars, showing how
+much of your current 5-hour session is left before it resets:
+
+- It's split into 5 gapped segments, one per hour of the session. Each solid segment is
+  a full hour still left, and the segment for the hour currently ticking away shrinks
+  gradually — so the number of visible segments alone tells you how many hours remain,
+  no hover needed.
+- The segments start at the top centre (12 o'clock) and run clockwise. As time passes,
+  the ring empties back towards 12 o'clock: the segment just left of the top goes first,
+  the one just right of it goes last.
+- An hour that has elapsed isn't drawn at all (there's no background track), so a
+  session close to resetting shows just a short stub.
+- It's white on a dark taskbar and dark grey on a light one, deliberately different from
+  the green/yellow/red usage bars so "time left" is never mistaken for "quota used".
+- It's redrawn on every refresh (every 5 minutes, see [Usage](#usage)), so it moves in
+  5-minute steps rather than continuously.
+
+It can be turned off under **Settings → Show session countdown ring** if you'd rather
+keep just the bars.
+
+### Before a session starts
+
+A 5-hour session only starts with your first message after the previous one expired.
+Until then, the icon shows that the clock isn't running yet:
+
+- The **session bar** is drawn as a dimmed outline instead of a filled bar.
+- The **countdown ring** is drawn full (all 5 hours are still available) but dimmed, in
+  the same colour as the outline.
+- The tooltip and the right-click menu show `(not started)` after the session
+  percentage, e.g. `Session (5h): 0% (not started)`.
+
+Once you send a message, the next refresh switches back to the normal look with the
+countdown running. The dimmed session bar also shows when the countdown ring is turned
+off.
 
 ## Installation
 
@@ -107,7 +137,8 @@ warning for the manual zip route.
 Enable **Show on Stream Dock controller** from the right-click menu and a key on any
 Stream Dock-protocol device (Soomfon "Stream Controller", Ajazz, Mirabox, ... - the same
 hardware/software family under different brands) can mirror the same usage bars and
-countdown ring, and trigger a refresh on press. This needs a small companion plugin
+countdown ring (including the dimmed look before a session starts), and trigger a
+refresh on press. This needs a small companion plugin
 installed in the controller's host app - see [`streamdock-plugin/README.md`](streamdock-plugin/README.md)
 for how it works and how to install it.
 
