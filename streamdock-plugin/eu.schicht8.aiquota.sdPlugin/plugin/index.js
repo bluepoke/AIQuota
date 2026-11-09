@@ -9,9 +9,15 @@ const AIQUOTA_BASE_URL = "http://127.0.0.1:51477";
 const AIQUOTA_HEADERS = { "X-AIQuota-Client": "streamdock-plugin" };
 const POLL_INTERVAL_MS = 4000;
 
-async function fetchStatus() {
+// Display style per key, picked in the property inspector (propertyInspector/usage/):
+// "combined" (all bars + countdown ring, like the tray icon), "session", "week" or
+// "credit". AIQuota renders the matching image (see AIQuota/StreamDock/DeckKeyStyle.cs).
+const DEFAULT_STYLE = "combined";
+
+async function fetchStatus(style) {
     try {
         const { data } = await axios.get(`${AIQUOTA_BASE_URL}/status`, {
+            params: { style },
             headers: AIQUOTA_HEADERS,
             timeout: 3000,
         });
@@ -29,20 +35,26 @@ function requestRefresh() {
 }
 
 async function pushStatus(context) {
-    const status = await fetchStatus();
+    const style = plugin.usage.data[context]?.style ?? DEFAULT_STYLE;
+    const status = await fetchStatus(style);
     if (status) window.socket.setImage(context, status.image);
 }
 
 const plugin = new Plugins("aiquota");
 
 plugin.usage = new Actions({
-    default: {},
+    default: { style: DEFAULT_STYLE },
     _willAppear({ context }) {
         plugin.setInterval(context, () => pushStatus(context), POLL_INTERVAL_MS);
         pushStatus(context);
     },
     _willDisappear({ context }) {
         plugin.clearInterval(context);
+    },
+    // Sent when the property inspector saves a new style for this key.
+    didReceiveSettings({ context, payload: { settings } }) {
+        this.data[context] = Object.assign({ ...this.default }, settings);
+        pushStatus(context);
     },
     keyDown({ context }) {
         requestRefresh();

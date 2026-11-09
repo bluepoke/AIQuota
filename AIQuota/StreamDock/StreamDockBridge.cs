@@ -21,7 +21,7 @@ namespace AIQuota.StreamDock;
 /// </summary>
 public sealed class StreamDockBridge : IDisposable
 {
-    /// <summary>Fixed by convention with the companion Python plugin (streamdock-plugin/) -
+    /// <summary>Fixed by convention with the companion JavaScript plugin (streamdock-plugin/) -
     /// not user-configurable, since both sides would need to agree on it.</summary>
     public const int Port = 51477;
 
@@ -122,7 +122,8 @@ public sealed class StreamDockBridge : IDisposable
     private static async Task WriteStatusAsync(HttpListenerContext context)
     {
         var snapshot = DeckStatusHolder.Current;
-        var imageBytes = DeckKeyRenderer.Render(snapshot);
+        var style = DeckKeyStyles.Parse(context.Request.QueryString["style"]);
+        var imageBytes = DeckKeyRenderer.Render(snapshot, style);
         var json = JsonSerializer.Serialize(new
         {
             loggedIn = snapshot.LoggedIn,

@@ -5,8 +5,11 @@ using System.Drawing.Imaging;
 namespace AIQuota.StreamDock;
 
 /// <summary>
-/// Renders a higher-resolution copy of the tray icon (see <see cref="TrayIconFactory"/>)
-/// as an opaque 200x200 PNG sized for a physical Stream Dock key face. Every shape, colour
+/// Renders an opaque 200x200 PNG sized for a physical Stream Dock key face, in one of the
+/// <see cref="DeckKeyStyle"/>s. The single-value styles (Session/Week/Credit) are their own
+/// layout, reusing the tray icon's colours and "session not started" look. The combined
+/// style is a higher-resolution copy of the tray icon (see <see cref="TrayIconFactory"/>),
+/// described below. Every shape, colour
 /// and size ratio is kept identical to the tray icon - every constant below is the tray
 /// icon's own constant (drawn at a fixed 32px canvas) multiplied by <see cref="Scale"/> -
 /// so this is deliberately a scaled copy of that drawing code rather than a fresh design.
@@ -26,7 +29,7 @@ internal static class DeckKeyRenderer
     /// bar outline and the countdown ring while no session has started.</summary>
     private static readonly Color TrackColor = Color.FromArgb(127, Color.White);
 
-    public static byte[] Render(DeckStatusSnapshot snapshot)
+    public static byte[] Render(DeckStatusSnapshot snapshot, DeckKeyStyle style = DeckKeyStyle.Combined)
     {
         using var bitmap = new Bitmap(Size, Size);
         using (var g = Graphics.FromImage(bitmap))
@@ -45,10 +48,25 @@ internal static class DeckKeyRenderer
             }
             else
             {
-                DrawBars(g, snapshot.SessionPercent, snapshot.WeeklyPercent, snapshot.CreditPercent, snapshot.SessionNotStarted);
-
-                if (snapshot.SessionRemainingFraction is { } fraction)
-                    DrawSessionRing(g, fraction, snapshot.SessionNotStarted);
+                switch (style)
+                {
+                    case DeckKeyStyle.Session:
+                        DrawSingleValue(g, "Session", snapshot.SessionPercent, snapshot.SessionNotStarted);
+                        if (snapshot.SessionRemainingFraction is { } remaining)
+                            DrawCountdownBlocks(g, remaining, snapshot.SessionNotStarted);
+                        break;
+                    case DeckKeyStyle.Week:
+                        DrawSingleValue(g, "Week", snapshot.WeeklyPercent);
+                        break;
+                    case DeckKeyStyle.Credit:
+                        DrawSingleValue(g, "Credit", snapshot.CreditPercent);
+                        break;
+                    default:
+                        DrawBars(g, snapshot.SessionPercent, snapshot.WeeklyPercent, snapshot.CreditPercent, snapshot.SessionNotStarted);
+                        if (snapshot.ShowSessionRing && snapshot.SessionRemainingFraction is { } fraction)
+                            DrawSessionRing(g, fraction, snapshot.SessionNotStarted);
+                        break;
+                }
 
                 if (snapshot.IsRefreshing)
                 {
@@ -61,6 +79,92 @@ internal static class DeckKeyRenderer
         using var stream = new MemoryStream();
         bitmap.Save(stream, ImageFormat.Png);
         return stream.ToArray();
+    }
+
+    // Layout of the single-value keys (Session/Week/Credit): a title on top, one tall bar that
+    // fills from the bottom with the percentage in its middle, and - Session only - a row of
+    // 5 countdown blocks underneath. Week/Credit keep the same bar position so a row of keys
+    // lines up.
+    private static readonly RectangleF SingleValueBar = new(22, 46, 156, 108);
+    private const float SingleValueBarRadius = 16f;
+    private const float SingleValueTitleCenterY = 24f;
+    private static readonly RectangleF CountdownRow = new(30, 166, 140, 12);
+    private const float CountdownGap = 6f;
+
+    /// <summary>Draws a single-value key: <paramref name="title"/> on top and one tall bar
+    /// filling from the bottom, with the same colour-for-percent as the other bars and the
+    /// percentage centered inside it (or "–" when there's no value, e.g. no usage credits).
+    /// With <paramref name="outlineOnly"/> the bar's empty part is drawn as an outline only -
+    /// the same "session not started" look as the tray icon's session bar.</summary>
+    private static void DrawSingleValue(Graphics g, string title, int? percent, bool outlineOnly = false)
+    {
+        using (var titleFont = new Font("Segoe UI", 26f, FontStyle.Bold, GraphicsUnit.Pixel))
+        using (var titleBrush = new SolidBrush(Color.White))
+        using (var titleFormat = new StringFormat(StringFormatFlags.NoWrap) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+            g.DrawString(title, titleFont, titleBrush, new RectangleF(0, 0, Size, SingleValueTitleCenterY * 2), titleFormat);
+
+        var rect = SingleValueBar;
+        using var trackPath = RoundedRect(rect, SingleValueBarRadius);
+        if (outlineOnly)
+        {
+            const float outlineWidth = 6f;
+            var inset = RectangleF.Inflate(rect, -outlineWidth / 2f, -outlineWidth / 2f);
+            using var outlinePath = RoundedRect(inset, SingleValueBarRadius - outlineWidth / 2f);
+            using var outlinePen = new Pen(TrackColor, outlineWidth);
+            g.DrawPath(outlinePen, outlinePath);
+        }
+        else
+        {
+            using var trackBrush = new SolidBrush(TrackColor);
+            g.FillPath(trackBrush, trackPath);
+        }
+
+        var clamped = percent is { } p ? Math.Clamp(p, 0, 100) : 0;
+        var fillHeight = rect.Height * clamped / 100f;
+        if (fillHeight > 0)
+        {
+            // Clipped to the bar's own shape so a low fill still follows its rounded bottom
+            // corners instead of being stretched to a minimum height.
+            var fillRect = new RectangleF(rect.X, rect.Bottom - fillHeight, rect.Width, fillHeight);
+            using var fillPath = RoundedRect(fillRect, Math.Min(SingleValueBarRadius, fillHeight / 2f));
+            using var fillBrush = new SolidBrush(ColorForPercent(clamped));
+            var previousClip = g.Clip;
+            g.SetClip(trackPath, CombineMode.Intersect);
+            g.FillPath(fillBrush, fillPath);
+            g.Clip = previousClip;
+        }
+
+        var text = percent is null ? "–" : $"{clamped}%";
+        using var font = new Font("Segoe UI", 44f, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var textBrush = new SolidBrush(Color.White);
+        using var format = new StringFormat(StringFormatFlags.NoWrap) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        g.DrawString(text, font, textBrush, rect, format);
+    }
+
+    /// <summary>The session countdown as 5 blocks in a row under the Session key's bar, one
+    /// per hour of the 5-hour session - the same rules as the countdown ring (see <see
+    /// cref="TrayIconFactory"/>): a solid block per full hour left, the block of the hour
+    /// currently ticking away shrinks from the right, elapsed hours aren't drawn at all, and
+    /// before a session starts all 5 are drawn in the dimmed track colour.</summary>
+    private static void DrawCountdownBlocks(Graphics g, double remainingFraction, bool notStarted)
+    {
+        const int blockCount = 5;
+        const float radius = 3f;
+        var blockWidth = (CountdownRow.Width - CountdownGap * (blockCount - 1)) / blockCount;
+        var hoursLeft = Math.Clamp(remainingFraction, 0.0, 1.0) * blockCount;
+
+        using var brush = new SolidBrush(notStarted ? TrackColor : Color.FromArgb(235, Color.White));
+        for (var i = 0; i < blockCount; i++)
+        {
+            var filled = (float)Math.Clamp(hoursLeft - i, 0.0, 1.0);
+            if (filled <= 0f)
+                continue;
+
+            var x = CountdownRow.X + i * (blockWidth + CountdownGap);
+            var block = new RectangleF(x, CountdownRow.Y, blockWidth * filled, CountdownRow.Height);
+            using var path = RoundedRect(block, Math.Min(radius, block.Width / 2f));
+            g.FillPath(brush, path);
+        }
     }
 
     /// <summary>Same layout as <see cref="TrayIconFactory"/>'s DrawBars: two bars, or three

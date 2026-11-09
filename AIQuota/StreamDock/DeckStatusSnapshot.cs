@@ -4,6 +4,10 @@ namespace AIQuota.StreamDock;
 /// a small, render-only projection of what <see cref="UsageTrayContext"/> already tracks
 /// for the tray icon, so <see cref="StreamDockBridge"/> doesn't need access to its private
 /// fields.</summary>
+/// <param name="SessionRemainingFraction">Session time left, regardless of <paramref
+/// name="ShowSessionRing"/> - the Session key always shows its countdown.</param>
+/// <param name="ShowSessionRing">Whether the tray icon shows its countdown ring, which the
+/// combined key mirrors.</param>
 public sealed record DeckStatusSnapshot(
     bool LoggedIn,
     bool IsWarning,
@@ -12,4 +16,5 @@ public sealed record DeckStatusSnapshot(
     int WeeklyPercent,
     int? CreditPercent,
     double? SessionRemainingFraction,
-    bool SessionNotStarted);
+    bool SessionNotStarted,
+    bool ShowSessionRing);

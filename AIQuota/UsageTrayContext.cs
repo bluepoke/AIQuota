@@ -363,7 +363,7 @@ public sealed class UsageTrayContext : ApplicationContext
             if (_hasUsageSnapshot)
             {
                 _currentIconKind = IconKind.Refreshing;
-                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction(), SessionNotStarted));
+                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted));
             }
 
             var result = await _usageApi.FetchAsync(CancellationToken.None);
@@ -440,7 +440,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _lastCreditPercent = creditPercent;
 
         _currentIconKind = IconKind.Usage;
-        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate, ComputeSessionRemainingFraction(), SessionNotStarted));
+        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate, SessionRingFraction, SessionNotStarted));
 
         SetNotifyIconText(
             Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt, creditPercent));
@@ -483,7 +483,8 @@ public sealed class UsageTrayContext : ApplicationContext
         WeeklyPercent: _lastWeeklyPercent,
         CreditPercent: _lastCreditPercent,
         SessionRemainingFraction: ComputeSessionRemainingFraction(),
-        SessionNotStarted: SessionNotStarted);
+        SessionNotStarted: SessionNotStarted,
+        ShowSessionRing: _showSessionRingItem.Checked);
 
     /// <summary>Regenerates whichever icon is currently shown with the update badge added
     /// or removed, for when update availability changes independently of the next usage
@@ -493,22 +494,26 @@ public sealed class UsageTrayContext : ApplicationContext
         var icon = _currentIconKind switch
         {
             IconKind.Warning => TrayIconFactory.CreateWarningIcon(HasUpdate),
-            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction(), SessionNotStarted),
-            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, ComputeSessionRemainingFraction(), SessionNotStarted),
+            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted),
+            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted),
             _ => TrayIconFactory.CreateUnavailableIcon(HasUpdate),
         };
         SetIcon(icon);
     }
 
+    /// <summary><see cref="ComputeSessionRemainingFraction"/> for the countdown ring drawn
+    /// around the tray icon; null when the ring is turned off in the menu.</summary>
+    private double? SessionRingFraction => _showSessionRingItem.Checked ? ComputeSessionRemainingFraction() : null;
+
     /// <summary>Fraction of the 5-hour session window still left before <see cref="_lastSessionResetsAt"/>,
-    /// for the countdown ring drawn around the tray icon; null when there's no session data yet
-    /// (not logged in, or no usage fetched yet). The API omits a reset time whenever no session
-    /// is currently running (no message sent since the last one expired) - that means the full
-    /// 5 hours are available the moment one starts, so the ring shows completely full (drawn
-    /// dimmed, see <see cref="SessionNotStarted"/>) rather than disappearing.</summary>
+    /// for the session countdown (tray ring, Stream Dock keys); null when there's no session data
+    /// yet (not logged in, or no usage fetched yet). The API omits a reset time whenever no
+    /// session is currently running (no message sent since the last one expired) - that means
+    /// the full 5 hours are available the moment one starts, so the countdown shows completely
+    /// full (drawn dimmed, see <see cref="SessionNotStarted"/>) rather than disappearing.</summary>
     private double? ComputeSessionRemainingFraction()
     {
-        if (!_showSessionRingItem.Checked || !_hasUsageSnapshot)
+        if (!_hasUsageSnapshot)
             return null;
 
         if (_lastSessionResetsAt is not { } resetsAt)
