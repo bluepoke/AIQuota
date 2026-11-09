@@ -67,9 +67,10 @@ keep just the bars.
 A 5-hour session only starts with your first message after the previous one expired.
 Until then, the icon shows that the clock isn't running yet:
 
-- The **session bar** is drawn as a dimmed outline instead of a filled bar.
-- The **countdown ring** is drawn full (all 5 hours are still available) but dimmed, in
-  the same colour as the outline.
+- The **session bar** is drawn as an outline only, in the grey of the bars' empty
+  background, instead of a filled bar.
+- The **countdown ring** is drawn full (all 5 hours are still available) but in that same
+  grey instead of white/dark grey.
 - The tooltip and the right-click menu show `(not started)` after the session
   percentage, e.g. `Session (5h): 0% (not started)`.
 

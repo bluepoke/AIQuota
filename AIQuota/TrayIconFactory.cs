@@ -116,7 +116,7 @@ public static class TrayIconFactory
         var targetLength = totalLength * (float)Math.Clamp(remainingFraction, 0.0, 1.0);
 
         var fillColor = notStarted
-            ? NotStartedColor(isLight)
+            ? TrackColor(isLight)
             : isLight ? Color.FromArgb(235, 40, 40, 40) : Color.FromArgb(235, Color.White);
         using var fillPen = new Pen(fillColor, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
 
@@ -313,14 +313,13 @@ public static class TrayIconFactory
             const float outlineWidth = 2f;
             var inset = RectangleF.Inflate(rect, -outlineWidth / 2f, -outlineWidth / 2f);
             using var outlinePath = RoundedRect(inset, radius - outlineWidth / 2f);
-            using var outlinePen = new Pen(NotStartedColor(isLight), outlineWidth);
+            using var outlinePen = new Pen(TrackColor(isLight), outlineWidth);
             g.DrawPath(outlinePen, outlinePath);
         }
         else
         {
-            var trackColor = isLight ? Color.FromArgb(127, Color.Black) : Color.FromArgb(127, Color.White);
             using var trackPath = RoundedRect(rect, radius);
-            using var trackBrush = new SolidBrush(trackColor);
+            using var trackBrush = new SolidBrush(TrackColor(isLight));
             g.FillPath(trackBrush, trackPath);
         }
 
@@ -379,10 +378,11 @@ public static class TrayIconFactory
         return path;
     }
 
-    /// <summary>Dimmed colour shared by the countdown ring and the session bar outline while
-    /// no session has started, so both read as "available, but not active".</summary>
-    private static Color NotStartedColor(bool isLight) =>
-        isLight ? Color.FromArgb(90, 40, 40, 40) : Color.FromArgb(80, Color.White);
+    /// <summary>Background (empty part) of a usage bar. Also used for the session bar outline
+    /// and the countdown ring while no session has started, so both read as "available, but
+    /// not active".</summary>
+    private static Color TrackColor(bool isLight) =>
+        isLight ? Color.FromArgb(127, Color.Black) : Color.FromArgb(127, Color.White);
 
     private static Color ColorForPercent(int percent) => percent switch
     {

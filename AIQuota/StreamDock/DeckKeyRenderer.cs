@@ -22,9 +22,9 @@ internal static class DeckKeyRenderer
 
     private static readonly Color Background = Color.FromArgb(255, 28, 28, 30);
 
-    /// <summary>The tray icon's dimmed "session not started" colour (dark branch), shared by
-    /// the countdown ring and the session bar outline.</summary>
-    private static readonly Color NotStartedColor = Color.FromArgb(80, Color.White);
+    /// <summary>The tray icon's bar background colour (dark branch). Also used for the session
+    /// bar outline and the countdown ring while no session has started.</summary>
+    private static readonly Color TrackColor = Color.FromArgb(127, Color.White);
 
     public static byte[] Render(DeckStatusSnapshot snapshot)
     {
@@ -95,13 +95,13 @@ internal static class DeckKeyRenderer
             const float outlineWidth = 2f * Scale;
             var inset = RectangleF.Inflate(rect, -outlineWidth / 2f, -outlineWidth / 2f);
             using var outlinePath = RoundedRect(inset, radius - outlineWidth / 2f);
-            using var outlinePen = new Pen(NotStartedColor, outlineWidth);
+            using var outlinePen = new Pen(TrackColor, outlineWidth);
             g.DrawPath(outlinePen, outlinePath);
         }
         else
         {
             using var trackPath = RoundedRect(rect, radius);
-            using var trackBrush = new SolidBrush(Color.FromArgb(127, Color.White));
+            using var trackBrush = new SolidBrush(TrackColor);
             g.FillPath(trackBrush, trackPath);
         }
 
@@ -155,7 +155,7 @@ internal static class DeckKeyRenderer
         var segmentLength = totalLength / segmentCount;
         var targetLength = totalLength * (float)Math.Clamp(remainingFraction, 0.0, 1.0);
 
-        using var fillPen = new Pen(notStarted ? NotStartedColor : Color.FromArgb(235, Color.White), penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var fillPen = new Pen(notStarted ? TrackColor :Color.FromArgb(235, Color.White), penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
 
         for (var i = 0; i < segmentCount; i++)
         {
