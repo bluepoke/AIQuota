@@ -8,6 +8,9 @@ namespace AIQuota.StreamDock;
 /// name="ShowSessionRing"/> - the Session key always shows its countdown.</param>
 /// <param name="ShowSessionRing">Whether the tray icon shows its countdown ring, which the
 /// combined key mirrors.</param>
+/// <param name="WeeklyPaceFraction">Elapsed fraction of the current 7-day window, where the
+/// weekly pace marker is drawn on the Combined and Week keys; null when the marker is turned
+/// off or there's no weekly reset time.</param>
 public sealed record DeckStatusSnapshot(
     bool LoggedIn,
     bool IsWarning,
@@ -17,4 +20,5 @@ public sealed record DeckStatusSnapshot(
     int? CreditPercent,
     double? SessionRemainingFraction,
     bool SessionNotStarted,
-    bool ShowSessionRing);
+    bool ShowSessionRing,
+    double? WeeklyPaceFraction = null);

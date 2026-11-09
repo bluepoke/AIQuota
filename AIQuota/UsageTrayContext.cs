@@ -11,7 +11,11 @@ public sealed class UsageTrayContext : ApplicationContext
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NewVersionCheckInterval = TimeSpan.FromHours(6);
     private static readonly TimeSpan SessionWindow = TimeSpan.FromHours(5);
+    private static readonly TimeSpan WeekWindow = TimeSpan.FromDays(7);
     private const int WarnThresholdPercent = 90;
+
+    /// <summary>Windows caps <see cref="NotifyIcon.Text"/> at 127 characters.</summary>
+    private const int MaxTooltipLength = 127;
 
     private readonly OAuthClient _oauth = new();
     private readonly UsageApiClient _usageApi;
@@ -28,6 +32,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _logoutItem;
     private readonly ToolStripMenuItem _startupItem;
     private readonly ToolStripMenuItem _showSessionRingItem;
+    private readonly ToolStripMenuItem _showWeeklyPaceItem;
     private readonly ToolStripMenuItem _streamDockItem;
     private readonly ToolStripMenuItem _checkForNewVersionItem;
     private readonly ToolStripMenuItem _newVersionAvailableItem;
@@ -55,9 +60,12 @@ public sealed class UsageTrayContext : ApplicationContext
     private int _lastWeeklyPercent;
     private int? _lastCreditPercent;
     private DateTimeOffset? _lastSessionResetsAt;
+    private DateTimeOffset? _lastWeeklyResetsAt;
+    private UsageSnapshot? _lastUsageSnapshot;
     private NewVersionInfo? _availableUpdate;
     private IconKind _currentIconKind = IconKind.Unavailable;
     private string _baseTooltipText = "";
+    private string? _compactTooltipText;
 
     private bool HasUpdate => _availableUpdate is not null;
 
@@ -83,6 +91,8 @@ public sealed class UsageTrayContext : ApplicationContext
         _startupItem.Click += OnToggleStartup;
         _showSessionRingItem = new ToolStripMenuItem { CheckOnClick = false, Checked = SessionRingPreference.IsEnabled() };
         _showSessionRingItem.Click += OnToggleSessionRing;
+        _showWeeklyPaceItem = new ToolStripMenuItem { CheckOnClick = false, Checked = WeeklyPacePreference.IsEnabled() };
+        _showWeeklyPaceItem.Click += OnToggleWeeklyPace;
         _streamDockItem = new ToolStripMenuItem { CheckOnClick = false, Checked = StreamDockPreference.IsEnabled() };
         _streamDockItem.Click += OnToggleStreamDock;
         _checkForNewVersionItem = new ToolStripMenuItem { CheckOnClick = false, Checked = NewVersionPreference.IsEnabled() };
@@ -108,6 +118,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _settingsMenu = new ToolStripMenuItem();
         _settingsMenu.DropDownItems.Add(_startupItem);
         _settingsMenu.DropDownItems.Add(_showSessionRingItem);
+        _settingsMenu.DropDownItems.Add(_showWeeklyPaceItem);
         _settingsMenu.DropDownItems.Add(_streamDockItem);
         _settingsMenu.DropDownItems.Add(_checkForNewVersionItem);
         _settingsMenu.DropDownItems.Add(_languageMenu);
@@ -176,6 +187,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _logoutItem.Text = Strings.MenuLogout;
         _startupItem.Text = Strings.MenuStartup;
         _showSessionRingItem.Text = Strings.MenuShowSessionRing;
+        _showWeeklyPaceItem.Text = Strings.MenuShowWeeklyPace;
         _streamDockItem.Text = Strings.MenuEnableStreamDock;
         _checkForNewVersionItem.Text = Strings.MenuCheckForNewVersion;
         if (_availableUpdate is not null)
@@ -245,6 +257,24 @@ public sealed class UsageTrayContext : ApplicationContext
         SessionRingPreference.SetEnabled(enable);
         _showSessionRingItem.Checked = enable;
         RedrawIconForCurrentState();
+    }
+
+    /// <summary>Shows or hides the weekly pace marker on the tray icon and deck keys, and the
+    /// matching pace value in the tooltip and the week menu entry, right away.</summary>
+    private void OnToggleWeeklyPace(object? sender, EventArgs e)
+    {
+        var enable = !_showWeeklyPaceItem.Checked;
+        WeeklyPacePreference.SetEnabled(enable);
+        _showWeeklyPaceItem.Checked = enable;
+        RedrawIconForCurrentState();
+
+        if (_lastUsageSnapshot is { } snapshot)
+        {
+            ApplyWeeklyMenuText(snapshot);
+            // Leave an error tooltip alone - only the usage tooltip shows the pace.
+            if (_currentIconKind == IconKind.Usage)
+                ApplyUsageTooltip(snapshot);
+        }
     }
 
     private void OnToggleStreamDock(object? sender, EventArgs e)
@@ -363,7 +393,7 @@ public sealed class UsageTrayContext : ApplicationContext
             if (_hasUsageSnapshot)
             {
                 _currentIconKind = IconKind.Refreshing;
-                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted));
+                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction));
             }
 
             var result = await _usageApi.FetchAsync(CancellationToken.None);
@@ -398,6 +428,8 @@ public sealed class UsageTrayContext : ApplicationContext
                 _hasUsageSnapshot = false;
                 _lastCreditPercent = null;
                 _lastSessionResetsAt = null;
+                _lastWeeklyResetsAt = null;
+                _lastUsageSnapshot = null;
                 _sessionItem.Text = Strings.MenuSessionEmpty;
                 _weeklyItem.Text = Strings.MenuWeeklyEmpty;
                 _creditsItem.Visible = false;
@@ -415,6 +447,8 @@ public sealed class UsageTrayContext : ApplicationContext
                 _hasUsageSnapshot = false;
                 _lastCreditPercent = null;
                 _lastSessionResetsAt = null;
+                _lastWeeklyResetsAt = null;
+                _lastUsageSnapshot = null;
                 _creditsItem.Visible = false;
                 _statusItem.Text = Strings.StatusPleaseReauth;
                 UpdateLoginMenuState();
@@ -433,6 +467,8 @@ public sealed class UsageTrayContext : ApplicationContext
         _lastSessionPercent = snapshot.SessionPercent;
         _lastWeeklyPercent = snapshot.WeeklyPercent;
         _lastSessionResetsAt = snapshot.SessionResetsAt;
+        _lastWeeklyResetsAt = snapshot.WeeklyResetsAt;
+        _lastUsageSnapshot = snapshot;
 
         int? creditPercent = snapshot is { CreditUsed: { } creditUsedForPercent, CreditLimit: > 0 and { } creditLimitForPercent }
             ? (int)Math.Round(Math.Clamp(creditUsedForPercent / creditLimitForPercent * 100m, 0, 100))
@@ -440,14 +476,13 @@ public sealed class UsageTrayContext : ApplicationContext
         _lastCreditPercent = creditPercent;
 
         _currentIconKind = IconKind.Usage;
-        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate, SessionRingFraction, SessionNotStarted));
+        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction));
 
-        SetNotifyIconText(
-            Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt, creditPercent));
+        ApplyUsageTooltip(snapshot);
 
         _sessionItem.Text = Strings.SessionLabel(snapshot.SessionPercent,
             SessionNotStarted ? Strings.SessionNotStartedSuffix : Strings.FormatReset(snapshot.SessionResetsAt));
-        _weeklyItem.Text = Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(snapshot.WeeklyResetsAt));
+        ApplyWeeklyMenuText(snapshot);
 
         if (snapshot is { CreditUsed: { } creditUsed, CreditLimit: { } creditLimit, CreditCurrency: { } creditCurrency })
         {
@@ -463,6 +498,24 @@ public sealed class UsageTrayContext : ApplicationContext
 
         MaybeWarn(snapshot);
     }
+
+    /// <summary>Sets the usage tooltip, with the weekly pace when the marker is on. A compact
+    /// variant without the pace is kept as a fallback, so the pace is what gets dropped - not
+    /// the end of the "update available" line - when everything together would exceed
+    /// <see cref="MaxTooltipLength"/>.</summary>
+    private void ApplyUsageTooltip(UsageSnapshot snapshot)
+    {
+        var pacePercent = WeeklyPacePercent;
+        var full = Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt, _lastCreditPercent, pacePercent);
+        var compact = pacePercent is null
+            ? null
+            : Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt, _lastCreditPercent);
+        SetNotifyIconText(full, compact);
+    }
+
+    private void ApplyWeeklyMenuText(UsageSnapshot snapshot) =>
+        _weeklyItem.Text = Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(snapshot.WeeklyResetsAt))
+            + Strings.WeeklyPaceSuffix(WeeklyPacePercent);
 
     private void SetIcon(Icon icon)
     {
@@ -484,7 +537,8 @@ public sealed class UsageTrayContext : ApplicationContext
         CreditPercent: _lastCreditPercent,
         SessionRemainingFraction: ComputeSessionRemainingFraction(),
         SessionNotStarted: SessionNotStarted,
-        ShowSessionRing: _showSessionRingItem.Checked);
+        ShowSessionRing: _showSessionRingItem.Checked,
+        WeeklyPaceFraction: WeeklyPaceFraction);
 
     /// <summary>Regenerates whichever icon is currently shown with the update badge added
     /// or removed, for when update availability changes independently of the next usage
@@ -494,8 +548,8 @@ public sealed class UsageTrayContext : ApplicationContext
         var icon = _currentIconKind switch
         {
             IconKind.Warning => TrayIconFactory.CreateWarningIcon(HasUpdate),
-            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted),
-            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted),
+            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction),
+            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction),
             _ => TrayIconFactory.CreateUnavailableIcon(HasUpdate),
         };
         SetIcon(icon);
@@ -523,22 +577,49 @@ public sealed class UsageTrayContext : ApplicationContext
         return Math.Clamp(remaining / SessionWindow, 0.0, 1.0);
     }
 
+    /// <summary>Elapsed fraction of the current 7-day window, i.e. where usage would be by now
+    /// if the weekly quota were spread evenly - drawn as the weekly pace marker (tray icon,
+    /// Stream Dock keys). Null when the marker is turned off in the menu, or there's no weekly
+    /// reset time (not logged in, no usage fetched yet, or the API omitted it).</summary>
+    private double? WeeklyPaceFraction
+    {
+        get
+        {
+            if (!_showWeeklyPaceItem.Checked || !_hasUsageSnapshot || _lastWeeklyResetsAt is not { } resetsAt)
+                return null;
+
+            var remaining = resetsAt - DateTimeOffset.Now;
+            return Math.Clamp(1.0 - remaining / WeekWindow, 0.0, 1.0);
+        }
+    }
+
+    /// <summary><see cref="WeeklyPaceFraction"/> as a whole percentage, for the tooltip and menu.</summary>
+    private int? WeeklyPacePercent => WeeklyPaceFraction is { } fraction ? (int)Math.Round(fraction * 100) : null;
+
     /// <summary>Records the tooltip text for the current state and applies it, appending
     /// the "update available" line when applicable so it survives later re-application via
     /// <see cref="ApplyTooltipText"/> (e.g. when update availability changes).</summary>
-    private void SetNotifyIconText(string baseText)
+    /// <param name="compactText">Shorter variant of <paramref name="baseText"/>, used instead
+    /// when the full text plus the update line wouldn't fit in <see cref="MaxTooltipLength"/>.</param>
+    private void SetNotifyIconText(string baseText, string? compactText = null)
     {
         _baseTooltipText = baseText;
+        _compactTooltipText = compactText;
         ApplyTooltipText();
     }
 
     private void ApplyTooltipText()
     {
-        var text = _availableUpdate is { } update
-            ? $"{_baseTooltipText}\n{Strings.TooltipUpdateAvailable(update.Version)}"
-            : _baseTooltipText;
-        _notifyIcon.Text = Truncate(text, 127);
+        var text = WithUpdateLine(_baseTooltipText);
+        if (text.Length > MaxTooltipLength && _compactTooltipText is { } compact)
+            text = WithUpdateLine(compact);
+        _notifyIcon.Text = Truncate(text, MaxTooltipLength);
     }
+
+    private string WithUpdateLine(string text) =>
+        _availableUpdate is { } update
+            ? $"{text}\n{Strings.TooltipUpdateAvailable(update.Version)}"
+            : text;
 
     private void MaybeWarn(UsageSnapshot snapshot)
     {

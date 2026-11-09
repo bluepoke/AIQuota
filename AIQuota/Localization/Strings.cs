@@ -41,6 +41,7 @@ public static class Strings
     public static string MenuStartup => T("Bei Windows-Start ausführen", "Run at Windows startup");
     public static string MenuCheckForNewVersion => T("Automatisch nach neuer Version suchen", "Automatically check for new version");
     public static string MenuShowSessionRing => T("Sitzungs-Countdown-Ring anzeigen", "Show session countdown ring");
+    public static string MenuShowWeeklyPace => T("Wochen-Pace-Markierung anzeigen", "Show weekly pace marker");
     public static string MenuEnableStreamDock => T("Auf Stream-Dock-Controller anzeigen", "Show on Stream Dock controller");
     public static string MenuNewVersionAvailable(string version) => T($"Neue Version verfügbar: v{version}", $"New version available: v{version}");
     public static string MenuRefresh => T("Jetzt aktualisieren", "Refresh now");
@@ -107,10 +108,12 @@ public static class Strings
     public static string FetchError(string error) => T($"Fehler beim Abrufen ({error})", $"Error fetching data ({error})");
     public static string StatusUpdated(DateTimeOffset time) => T($"Stand: {time:HH:mm:ss}", $"Updated: {time:HH:mm:ss}");
 
-    public static string TooltipSummary(int sessionPercent, DateTimeOffset? sessionResetsAt, int weeklyPercent, DateTimeOffset? weeklyResetsAt, DateTimeOffset fetchedAt, int? creditPercent = null)
+    /// <param name="weeklyPacePercent">Where even usage over the week would be by now - appended
+    /// to the week line as <see cref="WeeklyPaceSuffix"/> when set.</param>
+    public static string TooltipSummary(int sessionPercent, DateTimeOffset? sessionResetsAt, int weeklyPercent, DateTimeOffset? weeklyResetsAt, DateTimeOffset fetchedAt, int? creditPercent = null, int? weeklyPacePercent = null)
     {
         var sessionRemaining = sessionResetsAt is null ? SessionNotStartedSuffix : FormatCompactRemaining(sessionResetsAt);
-        var weeklyRemaining = FormatCompactRemaining(weeklyResetsAt);
+        var weeklyRemaining = FormatCompactRemaining(weeklyResetsAt) + WeeklyPaceSuffix(weeklyPacePercent);
         var time = fetchedAt.ToLocalTime().ToString("HH:mm");
         var creditsLine = creditPercent is { } cp ? T($"\nGuthaben: {cp}%", $"\nCredits: {cp}%") : "";
         return T(
@@ -163,6 +166,11 @@ public static class Strings
         T($"Sitzung (5h): {percent}%{resetSuffix}", $"Session (5h): {percent}%{resetSuffix}");
     public static string WeeklyLabel(int percent, string resetSuffix) =>
         T($"Woche: {percent}%{resetSuffix}", $"Week: {percent}%{resetSuffix}");
+
+    /// <summary>Appended to the week percentage, in the tooltip and the context menu, with the
+    /// weekly pace (e.g. " · pace 43%"); empty when there's no pace to show.</summary>
+    public static string WeeklyPaceSuffix(int? pacePercent) =>
+        pacePercent is { } p ? T($" · Pace {p}%", $" · pace {p}%") : "";
 
     // Built by hand rather than via CultureInfo.GetCultureInfo("de-DE") because the app runs
     // with <InvariantGlobalization>true</InvariantGlobalization>, which only supports the

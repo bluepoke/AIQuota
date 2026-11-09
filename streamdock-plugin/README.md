@@ -13,9 +13,9 @@ can put several keys side by side:
 
 | Style | Shows |
 |---|---|
-| **Combined** (default) | Same as the tray icon: all bars plus the session countdown ring (the ring follows AIQuota's "Show session countdown ring" setting). |
+| **Combined** (default) | Same as the tray icon: all bars plus the session countdown ring (the ring follows AIQuota's "Show session countdown ring" setting) and the weekly pace marker (following "Show weekly pace marker"), drawn as two notches above and below the week bar's text. |
 | **5h session** | The session usage as one large bar, with 5 countdown blocks underneath - one per hour left, following the same rules as the ring. Before a session starts, the bar is an outline and the blocks are dimmed. |
-| **Week** | The weekly usage as one large bar. |
+| **Week** | The weekly usage as one large bar, with the weekly pace marker as two notches at the bar's left and right edges (following AIQuota's "Show weekly pace marker" setting). |
 | **Credit** | The usage credit balance as one large bar, or "–" when your plan reports none. |
 
 Every style uses the same colours as the tray icon (green ≤ 50%, yellow

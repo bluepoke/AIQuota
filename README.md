@@ -26,7 +26,8 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
 usage credit balance (used/limit, when available), manual refresh, login/logout,
-run-at-startup toggle, a session countdown ring toggle, a Stream Dock controller toggle,
+run-at-startup toggle, a session countdown ring toggle, a weekly pace marker toggle, a
+Stream Dock controller toggle,
 a check-for-new-version toggle, and a language switch (German/English):
 
 ![Right-click menu with account, usage, and app options](screenshots/claude_usage_rmb_menu.png)
@@ -78,6 +79,26 @@ Once you send a message, the next refresh switches back to the normal look with 
 countdown running. The dimmed session bar also shows when the countdown ring is turned
 off.
 
+### Weekly pace marker
+
+A thin vertical tick on the week bar marks where your weekly usage would be by now if you
+spread the 7-day quota evenly over the week. For example, 3 days into the week it sits at
+about 43%:
+
+- **Fill stops before the tick**: you're behind pace, with quota to spare.
+- **Fill runs past the tick**: you're ahead of pace and on track to run out before the
+  weekly reset.
+
+The tick moves from left to right over the week and starts again at the left after the
+reset. It's white on a dark taskbar and dark grey on a light one (like the countdown ring),
+with a thin outline in the opposite tone so it stays visible over both the coloured fill and
+the empty track. The tooltip and the right-click menu show the same value after the week
+percentage, e.g. `Week: 62% (2d3h) · pace 43%`. If the tooltip would get too long (with a
+new version available, it can reach Windows' 127-character limit), it leaves out the pace.
+
+It can be turned off under **Settings → Show weekly pace marker**, which also removes the
+pace value from the tooltip and the menu.
+
 ## Installation
 
 **Microsoft Store** (not yet available)
@@ -118,7 +139,9 @@ click the "show hidden icons" `^` arrow the first time).
 4. Optionally check **Run at Windows startup** so it's always there after a reboot.
 5. The session countdown ring (**Show session countdown ring**) is on by default;
    uncheck it if you'd rather see just the plain usage bars.
-6. Switch the display language under **Language** (German/English) — it defaults to
+6. The weekly pace marker (**Show weekly pace marker**) is on by default too; uncheck it
+   to hide the tick on the week bar and the pace value in the tooltip and menu.
+7. Switch the display language under **Language** (German/English) — it defaults to
    your Windows UI language and remembers your choice.
 
 The app polls for updated usage every 5 minutes while it's running (plus whenever you

@@ -15,7 +15,9 @@ public static class TrayIconFactory
     /// <param name="sessionNotStarted">No 5-hour session is running yet (the API reported no
     /// reset time): the session bar is drawn as an outline only and the countdown ring dimmed,
     /// so a session that hasn't started can't be mistaken for one that just started.</param>
-    public static Icon CreateUsageIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null, bool sessionNotStarted = false)
+    /// <param name="weeklyPaceFraction">Elapsed fraction of the current 7-day window: draws the
+    /// weekly pace marker on the week bar at that position; null draws no marker.</param>
+    public static Icon CreateUsageIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null, bool sessionNotStarted = false, double? weeklyPaceFraction = null)
     {
         const int size = 32;
         var isLight = SystemTheme.IsLightTaskbar();
@@ -25,7 +27,7 @@ public static class TrayIconFactory
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight, sessionNotStarted);
+            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight, sessionNotStarted, weeklyPaceFraction);
 
             if (sessionRemainingFraction is { } fraction)
                 DrawSessionRing(g, fraction, size, isLight, sessionNotStarted);
@@ -39,7 +41,7 @@ public static class TrayIconFactory
 
     /// <summary>Same usage bars as <see cref="CreateUsageIcon"/>, dimmed and overlaid with a
     /// spinning-refresh glyph, shown while a fetch is in flight.</summary>
-    public static Icon CreateRefreshingIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null, bool sessionNotStarted = false)
+    public static Icon CreateRefreshingIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null, bool sessionNotStarted = false, double? weeklyPaceFraction = null)
     {
         const int size = 32;
         var isLight = SystemTheme.IsLightTaskbar();
@@ -49,7 +51,7 @@ public static class TrayIconFactory
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight, sessionNotStarted);
+            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight, sessionNotStarted, weeklyPaceFraction);
 
             if (sessionRemainingFraction is { } fraction)
                 DrawSessionRing(g, fraction, size, isLight, sessionNotStarted);
@@ -69,20 +71,59 @@ public static class TrayIconFactory
     /// <summary>Draws the session/weekly bars stacked in the middle of the icon, inset far
     /// enough from the edge to leave room for the session countdown ring, plus a third bar
     /// for usage credits when a value is available. The session bar's track is drawn as an
-    /// outline only while <paramref name="sessionNotStarted"/>.</summary>
-    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, int size, bool isLight, bool sessionNotStarted)
+    /// outline only while <paramref name="sessionNotStarted"/>. The week bar gets the pace
+    /// marker when <paramref name="weeklyPaceFraction"/> is set.</summary>
+    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, int size, bool isLight, bool sessionNotStarted, double? weeklyPaceFraction)
     {
+        Rectangle weekRect;
         if (creditPercent is { } credit)
         {
+            weekRect = new Rectangle(4, 12, size - 8, 7);
             DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 7), isLight, sessionNotStarted);
-            DrawBar(g, weeklyPercent, new Rectangle(4, 12, size - 8, 7), isLight);
+            DrawBar(g, weeklyPercent, weekRect, isLight);
             DrawBar(g, credit, new Rectangle(4, 20, size - 8, 7), isLight);
         }
         else
         {
+            weekRect = new Rectangle(4, 17, size - 8, 11);
             DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 11), isLight, sessionNotStarted);
-            DrawBar(g, weeklyPercent, new Rectangle(4, 17, size - 8, 11), isLight);
+            DrawBar(g, weeklyPercent, weekRect, isLight);
         }
+
+        if (weeklyPaceFraction is { } pace)
+            DrawPaceMarker(g, weekRect, pace, isLight);
+    }
+
+    /// <summary>Draws the weekly pace marker: a vertical tick across the week bar at the
+    /// position usage would have reached by now if the weekly quota were spread evenly over
+    /// the 7 days, so "fill past the tick" reads as "ahead of pace". The tick uses the
+    /// countdown ring's colour (white on a dark taskbar, dark grey on a light one), kept
+    /// apart from the green/yellow/red fill, and has a 1px outline in the opposite tone so it
+    /// stays visible over the fill and over the empty track. At 2px + 2x1px it shrinks to
+    /// about 1px + outline at the common 16px tray size. Clipped to the bar's rounded shape,
+    /// so a marker right at the start or end of the week doesn't stick out.</summary>
+    private static void DrawPaceMarker(Graphics g, Rectangle bar, double paceFraction, bool isLight)
+    {
+        const float coreWidth = 2f;
+        const float outlineWidth = 1f;
+
+        var halfCore = coreWidth / 2f;
+        var x = bar.X + bar.Width * (float)Math.Clamp(paceFraction, 0.0, 1.0);
+        x = Math.Clamp(x, bar.X + halfCore, bar.Right - halfCore);
+
+        var coreColor = isLight ? Color.FromArgb(235, 40, 40, 40) : Color.FromArgb(235, Color.White);
+        var outlineColor = isLight ? Color.FromArgb(230, Color.White) : Color.FromArgb(230, 20, 20, 20);
+
+        using var barPath = RoundedRect(bar, Math.Min(4, bar.Height / 2));
+        var previousClip = g.Clip;
+        g.SetClip(barPath, CombineMode.Intersect);
+
+        using (var outlineBrush = new SolidBrush(outlineColor))
+            g.FillRectangle(outlineBrush, x - halfCore - outlineWidth, bar.Y, coreWidth + 2 * outlineWidth, bar.Height);
+        using (var coreBrush = new SolidBrush(coreColor))
+            g.FillRectangle(coreBrush, x - halfCore, bar.Y, coreWidth, bar.Height);
+
+        g.Clip = previousClip;
     }
 
     /// <summary>Draws a countdown frame that traces the icon's rounded-square edge - hugging

@@ -56,13 +56,13 @@ internal static class DeckKeyRenderer
                             DrawCountdownBlocks(g, remaining, snapshot.SessionNotStarted);
                         break;
                     case DeckKeyStyle.Week:
-                        DrawSingleValue(g, "Week", snapshot.WeeklyPercent);
+                        DrawSingleValue(g, "Week", snapshot.WeeklyPercent, paceFraction: snapshot.WeeklyPaceFraction);
                         break;
                     case DeckKeyStyle.Credit:
                         DrawSingleValue(g, "Credit", snapshot.CreditPercent);
                         break;
                     default:
-                        DrawBars(g, snapshot.SessionPercent, snapshot.WeeklyPercent, snapshot.CreditPercent, snapshot.SessionNotStarted);
+                        DrawBars(g, snapshot.SessionPercent, snapshot.WeeklyPercent, snapshot.CreditPercent, snapshot.SessionNotStarted, snapshot.WeeklyPaceFraction);
                         if (snapshot.ShowSessionRing && snapshot.SessionRemainingFraction is { } fraction)
                             DrawSessionRing(g, fraction, snapshot.SessionNotStarted);
                         break;
@@ -95,8 +95,10 @@ internal static class DeckKeyRenderer
     /// filling from the bottom, with the same colour-for-percent as the other bars and the
     /// percentage centered inside it (or "–" when there's no value, e.g. no usage credits).
     /// With <paramref name="outlineOnly"/> the bar's empty part is drawn as an outline only -
-    /// the same "session not started" look as the tray icon's session bar.</summary>
-    private static void DrawSingleValue(Graphics g, string title, int? percent, bool outlineOnly = false)
+    /// the same "session not started" look as the tray icon's session bar. With <paramref
+    /// name="paceFraction"/> the weekly pace marker is drawn across the bar, as a horizontal
+    /// line since this bar fills upwards.</summary>
+    private static void DrawSingleValue(Graphics g, string title, int? percent, bool outlineOnly = false, double? paceFraction = null)
     {
         using (var titleFont = new Font("Segoe UI", 26f, FontStyle.Bold, GraphicsUnit.Pixel))
         using (var titleBrush = new SolidBrush(Color.White))
@@ -134,6 +136,15 @@ internal static class DeckKeyRenderer
             g.Clip = previousClip;
         }
 
+        if (paceFraction is { } pace)
+        {
+            const float coreWidth = 6f;
+            const float outlineWidth = 3f;
+            var y = rect.Bottom - rect.Height * (float)Math.Clamp(pace, 0.0, 1.0);
+            y = Math.Clamp(y, rect.Y + coreWidth / 2f, rect.Bottom - coreWidth / 2f);
+            DrawPaceTick(g, trackPath, new RectangleF(rect.X, y - coreWidth / 2f, rect.Width, coreWidth), outlineWidth, rect.Width * 0.14f);
+        }
+
         var text = percent is null ? "–" : $"{clamped}%";
         using var font = new Font("Segoe UI", 44f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var textBrush = new SolidBrush(Color.White);
@@ -169,27 +180,30 @@ internal static class DeckKeyRenderer
 
     /// <summary>Same layout as <see cref="TrayIconFactory"/>'s DrawBars: two bars, or three
     /// when a credit percentage is available, stacked in the middle of the icon inset far
-    /// enough to leave room for the session countdown ring.</summary>
-    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, bool sessionNotStarted)
+    /// enough to leave room for the session countdown ring - including the week bar's pace
+    /// marker when <paramref name="weeklyPaceFraction"/> is set.</summary>
+    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, bool sessionNotStarted, double? weeklyPaceFraction)
     {
         if (creditPercent is { } credit)
         {
             DrawBar(g, "Session", sessionPercent, new RectangleF(4 * Scale, 4 * Scale, (Size - 8 * Scale), 7 * Scale), sessionNotStarted);
-            DrawBar(g, "Week", weeklyPercent, new RectangleF(4 * Scale, 12 * Scale, (Size - 8 * Scale), 7 * Scale));
+            DrawBar(g, "Week", weeklyPercent, new RectangleF(4 * Scale, 12 * Scale, (Size - 8 * Scale), 7 * Scale), paceFraction: weeklyPaceFraction);
             DrawBar(g, "Credit", credit, new RectangleF(4 * Scale, 20 * Scale, (Size - 8 * Scale), 7 * Scale));
         }
         else
         {
             DrawBar(g, "Session", sessionPercent, new RectangleF(4 * Scale, 4 * Scale, (Size - 8 * Scale), 11 * Scale), sessionNotStarted);
-            DrawBar(g, "Week", weeklyPercent, new RectangleF(4 * Scale, 17 * Scale, (Size - 8 * Scale), 11 * Scale));
+            DrawBar(g, "Week", weeklyPercent, new RectangleF(4 * Scale, 17 * Scale, (Size - 8 * Scale), 11 * Scale), paceFraction: weeklyPaceFraction);
         }
     }
 
     /// <summary>Same track/fill geometry and colour-for-percent as <see
     /// cref="TrayIconFactory"/>'s DrawBar (including its outline-only track for a session
     /// that hasn't started), plus - since a bar is now tall enough to hold it - the label and
-    /// percentage as one centered line ("Session 45%").</summary>
-    private static void DrawBar(Graphics g, string label, int percent, RectangleF rect, bool outlineOnly = false)
+    /// percentage as one centered line ("Session 45%"). With <paramref name="paceFraction"/>
+    /// the weekly pace marker is drawn too, as notches above and below that text line (see
+    /// <see cref="DrawPaceTick"/>).</summary>
+    private static void DrawBar(Graphics g, string label, int percent, RectangleF rect, bool outlineOnly = false, double? paceFraction = null)
     {
         var clamped = Math.Clamp(percent, 0, 100);
         var radius = Math.Min(4f * Scale, rect.Height / 2f);
@@ -218,10 +232,49 @@ internal static class DeckKeyRenderer
             g.FillPath(fillBrush, fillPath);
         }
 
+        if (paceFraction is { } pace)
+        {
+            const float coreWidth = 1.2f * Scale;
+            const float outlineWidth = 0.5f * Scale;
+            var x = rect.X + rect.Width * (float)Math.Clamp(pace, 0.0, 1.0);
+            x = Math.Clamp(x, rect.X + coreWidth / 2f, rect.Right - coreWidth / 2f);
+            using var barPath = RoundedRect(rect, radius);
+            DrawPaceTick(g, barPath, new RectangleF(x - coreWidth / 2f, rect.Y, coreWidth, rect.Height), outlineWidth, rect.Height * 0.28f);
+        }
+
         using var format = new StringFormat(StringFormatFlags.NoWrap) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         using var font = new Font("Segoe UI", FitFontSize(g, rect, format), FontStyle.Bold, GraphicsUnit.Pixel);
         using var textBrush = new SolidBrush(Color.White);
         g.DrawString($"{label} {clamped}%", font, textBrush, rect, format);
+    }
+
+    /// <summary>Mirrors <see cref="TrayIconFactory"/>'s pace marker ("dark taskbar" branch): a
+    /// white tick with a dark outline of <paramref name="outlineWidth"/>, clipped to the bar's
+    /// rounded shape (<paramref name="barPath"/>). Unlike the tray icon, which has no text in
+    /// its bars, the tick isn't drawn across the whole bar - which would run straight through
+    /// the white percentage text - but only as two notches of <paramref name="notchLength"/>
+    /// at either end of <paramref name="core"/> (the full tick, spanning the bar), leaving the
+    /// text in the middle clear. Works for both the horizontal bars (vertical tick, notches at
+    /// top and bottom) and the Week key's upward-filling bar (horizontal tick, notches at the
+    /// left and right edges).</summary>
+    private static void DrawPaceTick(Graphics g, GraphicsPath barPath, RectangleF core, float outlineWidth, float notchLength)
+    {
+        var vertical = core.Width < core.Height;
+        RectangleF[] notches = vertical
+            ? [new(core.X, core.Y, core.Width, notchLength), new(core.X, core.Bottom - notchLength, core.Width, notchLength)]
+            : [new(core.X, core.Y, notchLength, core.Height), new(core.Right - notchLength, core.Y, notchLength, core.Height)];
+
+        var previousClip = g.Clip;
+        g.SetClip(barPath, CombineMode.Intersect);
+        using var outlineBrush = new SolidBrush(Color.FromArgb(230, 20, 20, 20));
+        using var coreBrush = new SolidBrush(Color.FromArgb(235, Color.White));
+        foreach (var notch in notches)
+        {
+            // Outlined on all sides; the outer end is cut off again by the bar's clip.
+            g.FillRectangle(outlineBrush, RectangleF.Inflate(notch, outlineWidth, outlineWidth));
+            g.FillRectangle(coreBrush, notch);
+        }
+        g.Clip = previousClip;
     }
 
     /// <summary>Font size for a bar's text: as tall as the bar allows, shrunk so the widest
