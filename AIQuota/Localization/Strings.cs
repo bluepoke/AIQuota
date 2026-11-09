@@ -52,6 +52,32 @@ public static class Strings
     public static string VersionLabel(string version) => T($"AIQuota Version {version}", $"AIQuota Version {version}");
     public static string MenuGitHub => T("GitHub-Seite öffnen", "Open GitHub page");
     public static string MenuSettings => T("Einstellungen", "Settings");
+    public static string MenuHistory => T("Nutzungsverlauf", "Usage history");
+    public static string MenuHistoryExport => T("Als CSV exportieren…", "Export as CSV…");
+    public static string MenuHistoryClear => T("Verlauf löschen…", "Clear history…");
+
+    public static string HistoryExportDialogTitle => T("Nutzungsverlauf exportieren", "Export usage history");
+    public static string HistoryCsvFilter => T("CSV-Dateien (*.csv)|*.csv", "CSV files (*.csv)|*.csv");
+    public static string HistoryEmpty => T(
+        "Für dieses Konto wurde noch kein Nutzungsverlauf aufgezeichnet.",
+        "No usage history has been recorded for this account yet.");
+    public static string HistoryExportFailed(string message) => T($"Export fehlgeschlagen:\n{message}", $"Export failed:\n{message}");
+    public static string ConfirmClearHistory => T(
+        "Den gespeicherten Nutzungsverlauf aller Konten auf diesem PC löschen?\n\nDie Prognose startet danach ohne Daten neu.",
+        "Delete the stored usage history of all accounts on this PC?\n\nThe forecast starts over without data afterwards.");
+
+    /// <summary>Context menu line under the session/week entry: the burn-rate forecast.</summary>
+    public static string ForecastLimitIn(TimeSpan timeToLimit) => T(
+        $"    ↳ Limit in ~{FormatDuration(timeToLimit)} beim aktuellen Verbrauch",
+        $"    ↳ Limit in ~{FormatDuration(timeToLimit)} at current rate");
+    public static string ForecastResetFirst => T(
+        "    ↳ Reset kommt beim aktuellen Verbrauch vor dem Limit",
+        "    ↳ On track to reset first");
+
+    /// <summary>Appended to the session/week line in the tooltip when the limit is forecast to
+    /// be reached before the reset (e.g. " · limit ~40min"); empty otherwise.</summary>
+    public static string ForecastTooltipSuffix(TimeSpan? timeToLimit) =>
+        timeToLimit is { } t ? T($" · Limit ~{FormatDuration(t)}", $" · limit ~{FormatDuration(t)}") : "";
     public static string MenuAbout => T("Über", "About");
 
     public static string TooltipNotLoggedIn => T("Claude Nutzung – nicht angemeldet", "Claude Usage – not logged in");
@@ -110,10 +136,15 @@ public static class Strings
 
     /// <param name="weeklyPacePercent">Where even usage over the week would be by now - appended
     /// to the week line as <see cref="WeeklyPaceSuffix"/> when set.</param>
-    public static string TooltipSummary(int sessionPercent, DateTimeOffset? sessionResetsAt, int weeklyPercent, DateTimeOffset? weeklyResetsAt, DateTimeOffset fetchedAt, int? creditPercent = null, int? weeklyPacePercent = null)
+    /// <param name="sessionLimitIn">Forecast time until the session limit - appended to the
+    /// session line as <see cref="ForecastTooltipSuffix"/> when set.</param>
+    /// <param name="weeklyLimitIn">Same for the week line.</param>
+    public static string TooltipSummary(int sessionPercent, DateTimeOffset? sessionResetsAt, int weeklyPercent, DateTimeOffset? weeklyResetsAt, DateTimeOffset fetchedAt, int? creditPercent = null, int? weeklyPacePercent = null, TimeSpan? sessionLimitIn = null, TimeSpan? weeklyLimitIn = null)
     {
-        var sessionRemaining = sessionResetsAt is null ? SessionNotStartedSuffix : FormatCompactRemaining(sessionResetsAt);
-        var weeklyRemaining = FormatCompactRemaining(weeklyResetsAt) + WeeklyPaceSuffix(weeklyPacePercent);
+        var sessionRemaining = (sessionResetsAt is null ? SessionNotStartedSuffix : FormatCompactRemaining(sessionResetsAt))
+            + ForecastTooltipSuffix(sessionLimitIn);
+        var weeklyRemaining = FormatCompactRemaining(weeklyResetsAt) + WeeklyPaceSuffix(weeklyPacePercent)
+            + ForecastTooltipSuffix(weeklyLimitIn);
         var time = fetchedAt.ToLocalTime().ToString("HH:mm");
         var creditsLine = creditPercent is { } cp ? T($"\nGuthaben: {cp}%", $"\nCredits: {cp}%") : "";
         return T(
@@ -209,6 +240,9 @@ public static class Strings
 
     public static string BalloonSessionWarning(int percent) => T($"Sitzungslimit (5h) bei {percent}%.", $"Session limit (5h) at {percent}%.");
     public static string BalloonWeeklyWarning(int percent) => T($"Wochenlimit bei {percent}%.", $"Weekly limit at {percent}%.");
+    public static string BalloonSessionForecast(TimeSpan timeToLimit) => T(
+        $"Beim aktuellen Verbrauch ist das Sitzungslimit (5h) in ~{FormatDuration(timeToLimit)} erreicht.",
+        $"At the current rate, you'll hit the session limit (5h) in ~{FormatDuration(timeToLimit)}.");
     public static string BalloonNewVersionAvailable(string version) => T(
         $"Eine neue Version (v{version}) ist verfügbar. Klicke hier, um die Release-Seite zu öffnen.",
         $"A new version (v{version}) is available. Click here to open the release page.");

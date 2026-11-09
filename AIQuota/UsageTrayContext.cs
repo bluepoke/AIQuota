@@ -1,4 +1,5 @@
 using AIQuota.Auth;
+using AIQuota.History;
 using AIQuota.Localization;
 using AIQuota.StreamDock;
 
@@ -14,6 +15,13 @@ public sealed class UsageTrayContext : ApplicationContext
     private static readonly TimeSpan WeekWindow = TimeSpan.FromDays(7);
     private const int WarnThresholdPercent = 90;
 
+    /// <summary>Warn once when the session is forecast to hit its limit within this time...</summary>
+    private static readonly TimeSpan ForecastWarnWithin = TimeSpan.FromMinutes(30);
+
+    /// <summary>...and only warn again after the forecast has gone back above this (or away),
+    /// so a forecast hovering around 30 minutes doesn't warn on every poll.</summary>
+    private static readonly TimeSpan ForecastRearmAbove = TimeSpan.FromMinutes(45);
+
     /// <summary>Windows caps <see cref="NotifyIcon.Text"/> at 127 characters.</summary>
     private const int MaxTooltipLength = 127;
 
@@ -25,7 +33,9 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly System.Windows.Forms.Timer _newVersionCheckTimer;
     private readonly ToolStripMenuItem _userItem;
     private readonly ToolStripMenuItem _sessionItem;
+    private readonly ToolStripMenuItem _sessionForecastItem;
     private readonly ToolStripMenuItem _weeklyItem;
+    private readonly ToolStripMenuItem _weeklyForecastItem;
     private readonly ToolStripMenuItem _creditsItem;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _loginItem;
@@ -45,16 +55,28 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _githubItem;
     private readonly ToolStripMenuItem _settingsMenu;
     private readonly ToolStripMenuItem _aboutMenu;
+    private readonly ToolStripMenuItem _historyMenu;
+    private readonly ToolStripMenuItem _historyExportItem;
+    private readonly ToolStripMenuItem _historyClearItem;
 
+    private readonly IUsageHistory _history = new JsonlUsageHistory();
     private readonly SynchronizationContext _uiContext;
     private StreamDockBridge? _streamDockBridge;
 
     private bool _sessionWarningShown;
     private bool _weeklyWarningShown;
+    private bool _sessionForecastWarningShown;
     private bool _refreshInProgress;
     private bool _newVersionCheckInProgress;
     private bool _updateInProgress;
     private string? _cachedAccountName;
+
+    /// <summary>Stable ID of the signed-in account (see <see cref="AccountInfo.Id"/>), keying
+    /// the usage history; null until the profile has been fetched successfully.</summary>
+    private string? _accountId;
+
+    private UsageForecast _sessionForecast = UsageForecast.None;
+    private UsageForecast _weeklyForecast = UsageForecast.None;
     private bool _hasUsageSnapshot;
     private int _lastSessionPercent;
     private int _lastWeeklyPercent;
@@ -64,8 +86,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private UsageSnapshot? _lastUsageSnapshot;
     private NewVersionInfo? _availableUpdate;
     private IconKind _currentIconKind = IconKind.Unavailable;
-    private string _baseTooltipText = "";
-    private string? _compactTooltipText;
+    private string[] _tooltipCandidates = [""];
 
     private bool HasUpdate => _availableUpdate is not null;
 
@@ -80,7 +101,9 @@ public sealed class UsageTrayContext : ApplicationContext
 
         _userItem = new ToolStripMenuItem { Enabled = false, Visible = false };
         _sessionItem = new ToolStripMenuItem { Enabled = false };
+        _sessionForecastItem = new ToolStripMenuItem { Enabled = false, Visible = false };
         _weeklyItem = new ToolStripMenuItem { Enabled = false };
+        _weeklyForecastItem = new ToolStripMenuItem { Enabled = false, Visible = false };
         _creditsItem = new ToolStripMenuItem { Enabled = false, Visible = false };
         _statusItem = new ToolStripMenuItem { Enabled = false };
         _loginItem = new ToolStripMenuItem();
@@ -127,16 +150,27 @@ public sealed class UsageTrayContext : ApplicationContext
         _aboutMenu.DropDownItems.Add(_githubItem);
         _aboutMenu.DropDownItems.Add(_versionItem);
 
+        _historyExportItem = new ToolStripMenuItem();
+        _historyExportItem.Click += OnExportHistoryClicked;
+        _historyClearItem = new ToolStripMenuItem();
+        _historyClearItem.Click += OnClearHistoryClicked;
+        _historyMenu = new ToolStripMenuItem();
+        _historyMenu.DropDownItems.Add(_historyExportItem);
+        _historyMenu.DropDownItems.Add(_historyClearItem);
+
         var menu = new ContextMenuStrip();
         menu.Items.Add(_userItem);
         menu.Items.Add(_sessionItem);
+        menu.Items.Add(_sessionForecastItem);
         menu.Items.Add(_weeklyItem);
+        menu.Items.Add(_weeklyForecastItem);
         menu.Items.Add(_creditsItem);
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_refreshItem);
         menu.Items.Add(_loginItem);
         menu.Items.Add(_logoutItem);
+        menu.Items.Add(_historyMenu);
         menu.Items.Add(_settingsMenu);
         menu.Items.Add(_aboutMenu);
         menu.Items.Add(new ToolStripSeparator());
@@ -201,6 +235,10 @@ public sealed class UsageTrayContext : ApplicationContext
         _githubItem.Text = Strings.MenuGitHub;
         _settingsMenu.Text = Strings.MenuSettings;
         _aboutMenu.Text = Strings.MenuAbout;
+        _historyMenu.Text = Strings.MenuHistory;
+        _historyExportItem.Text = Strings.MenuHistoryExport;
+        _historyClearItem.Text = Strings.MenuHistoryClear;
+        ApplyForecastMenuTexts();
         SetNotifyIconText(Strings.TooltipNotLoggedIn);
     }
 
@@ -228,10 +266,73 @@ public sealed class UsageTrayContext : ApplicationContext
     private async void OnLogoutClicked(object? sender, EventArgs e)
     {
         _oauth.Logout();
-        _cachedAccountName = null;
-        _userItem.Visible = false;
+        ForgetAccount();
         UpdateLoginMenuState();
         await RefreshAsync();
+    }
+
+    /// <summary>Drops everything tied to the signed-in account: its label, and the loaded
+    /// usage history and forecast. The history files themselves stay on disk (see
+    /// <see cref="OnClearHistoryClicked"/> to delete them).</summary>
+    private void ForgetAccount()
+    {
+        _cachedAccountName = null;
+        _accountId = null;
+        _userItem.Visible = false;
+        _history.SetAccount(null);
+        ResetForecasts();
+    }
+
+    private void ResetForecasts()
+    {
+        _sessionForecast = UsageForecast.None;
+        _weeklyForecast = UsageForecast.None;
+        _sessionForecastWarningShown = false;
+        ApplyForecastMenuTexts();
+    }
+
+    private void OnExportHistoryClicked(object? sender, EventArgs e)
+    {
+        var records = _history.Records;
+        if (records.Count == 0)
+        {
+            MessageBox.Show(Strings.HistoryEmpty, Strings.AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new SaveFileDialog
+        {
+            Title = Strings.HistoryExportDialogTitle,
+            Filter = Strings.HistoryCsvFilter,
+            DefaultExt = "csv",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = $"AIQuota-history-{DateTime.Now:yyyy-MM-dd}.csv",
+        };
+        if (dialog.ShowDialog() != DialogResult.OK)
+            return;
+
+        try
+        {
+            UsageHistoryCsv.Write(dialog.FileName, records);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(Strings.HistoryExportFailed(ex.Message), Strings.AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void OnClearHistoryClicked(object? sender, EventArgs e)
+    {
+        var answer = MessageBox.Show(Strings.ConfirmClearHistory, Strings.AppTitle,
+            MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes)
+            return;
+
+        _history.Clear();
+        ResetForecasts();
+        if (_currentIconKind == IconKind.Usage && _lastUsageSnapshot is { } snapshot)
+            ApplyUsageTooltip(snapshot);
     }
 
     private void OnToggleStartup(object? sender, EventArgs e)
@@ -397,22 +498,40 @@ public sealed class UsageTrayContext : ApplicationContext
             }
 
             var result = await _usageApi.FetchAsync(CancellationToken.None);
-            ApplyResult(result);
 
-            if (result.Status == UsageFetchStatus.Ok && _cachedAccountName is null)
-            {
-                _cachedAccountName = await _usageApi.FetchAccountNameAsync(CancellationToken.None);
-                if (_cachedAccountName is not null)
-                {
-                    _userItem.Text = Strings.UserLabel(_cachedAccountName);
-                    _userItem.Visible = true;
-                }
-            }
+            // The account is resolved before the result is applied, so the very first fetch
+            // already lands in the right account's history and feeds the forecast.
+            if (result.Status == UsageFetchStatus.Ok && _accountId is null)
+                await ResolveAccountAsync();
+
+            if (result is { Status: UsageFetchStatus.Ok, Snapshot: { } snapshot })
+                _history.Append(UsageHistoryRecord.FromSnapshot(snapshot));
+
+            ApplyResult(result);
         }
         finally
         {
             _refreshInProgress = false;
         }
+    }
+
+    /// <summary>Fetches the signed-in account's label (shown at the top of the menu) and ID
+    /// (keys the usage history). On failure both stay unset and the next successful usage
+    /// fetch tries again; until then, fetches aren't recorded in the history.</summary>
+    private async Task ResolveAccountAsync()
+    {
+        if (await _usageApi.FetchAccountAsync(CancellationToken.None) is not { } account)
+            return;
+
+        if (account.DisplayLabel is { } label)
+        {
+            _cachedAccountName = label;
+            _userItem.Text = Strings.UserLabel(label);
+            _userItem.Visible = true;
+        }
+
+        _accountId = account.Id;
+        _history.SetAccount(account.Id);
     }
 
     private void ApplyResult(UsageFetchResult result)
@@ -423,8 +542,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _currentIconKind = IconKind.Unavailable;
                 SetIcon(TrayIconFactory.CreateUnavailableIcon(HasUpdate));
                 SetNotifyIconText(Strings.TooltipNotLoggedIn);
-                _userItem.Visible = false;
-                _cachedAccountName = null;
+                ForgetAccount();
                 _hasUsageSnapshot = false;
                 _lastCreditPercent = null;
                 _lastSessionResetsAt = null;
@@ -442,8 +560,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _currentIconKind = IconKind.Unavailable;
                 SetIcon(TrayIconFactory.CreateUnavailableIcon(HasUpdate));
                 SetNotifyIconText(Strings.TooltipAuthExpired);
-                _userItem.Visible = false;
-                _cachedAccountName = null;
+                ForgetAccount();
                 _hasUsageSnapshot = false;
                 _lastCreditPercent = null;
                 _lastSessionResetsAt = null;
@@ -475,6 +592,8 @@ public sealed class UsageTrayContext : ApplicationContext
             : null;
         _lastCreditPercent = creditPercent;
 
+        UpdateForecasts(snapshot);
+
         _currentIconKind = IconKind.Usage;
         SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction));
 
@@ -499,18 +618,61 @@ public sealed class UsageTrayContext : ApplicationContext
         MaybeWarn(snapshot);
     }
 
-    /// <summary>Sets the usage tooltip, with the weekly pace when the marker is on. A compact
-    /// variant without the pace is kept as a fallback, so the pace is what gets dropped - not
-    /// the end of the "update available" line - when everything together would exceed
-    /// <see cref="MaxTooltipLength"/>.</summary>
+    /// <summary>Recomputes the session and week burn-rate forecasts from the history (which
+    /// already includes <paramref name="snapshot"/>) and shows them in the menu. No session
+    /// forecast while no session is running.</summary>
+    private void UpdateForecasts(UsageSnapshot snapshot)
+    {
+        var now = DateTimeOffset.Now;
+        var records = _history.Records;
+
+        _sessionForecast = SessionNotStarted
+            ? UsageForecast.None
+            : BurnRateForecaster.Forecast(
+                records.Select(r => new UsagePoint(r.Time, r.Session, r.SessionResetsAt)),
+                snapshot.SessionResetsAt, BurnRateForecaster.Session, now);
+        _weeklyForecast = BurnRateForecaster.Forecast(
+            records.Select(r => new UsagePoint(r.Time, r.Week, r.WeekResetsAt)),
+            snapshot.WeeklyResetsAt, BurnRateForecaster.Week, now);
+
+        ApplyForecastMenuTexts();
+    }
+
+    /// <summary>Shows each forecast as an indented line under its session/week menu entry:
+    /// "limit in ~X" or "on track to reset first", hidden when there's no forecast.</summary>
+    private void ApplyForecastMenuTexts()
+    {
+        static void Apply(ToolStripMenuItem item, UsageForecast forecast)
+        {
+            item.Text = forecast.Kind switch
+            {
+                ForecastKind.Limit => Strings.ForecastLimitIn(forecast.TimeToLimit),
+                ForecastKind.ResetFirst => Strings.ForecastResetFirst,
+                _ => "",
+            };
+            item.Visible = forecast.Kind != ForecastKind.None;
+        }
+
+        Apply(_sessionForecastItem, _sessionForecast);
+        Apply(_weeklyForecastItem, _weeklyForecast);
+    }
+
+    /// <summary>Sets the usage tooltip, with the weekly pace when the marker is on and the
+    /// time until a forecast limit. Shorter variants are kept as fallbacks for when everything
+    /// together (plus the "update available" line) would exceed <see cref="MaxTooltipLength"/>:
+    /// first the pace is dropped, then the forecast - rather than cutting off the end.</summary>
     private void ApplyUsageTooltip(UsageSnapshot snapshot)
     {
-        var pacePercent = WeeklyPacePercent;
-        var full = Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt, _lastCreditPercent, pacePercent);
-        var compact = pacePercent is null
-            ? null
-            : Strings.TooltipSummary(snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt, snapshot.FetchedAt, _lastCreditPercent);
-        SetNotifyIconText(full, compact);
+        string Summary(int? pacePercent, bool withForecast) => Strings.TooltipSummary(
+            snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt,
+            snapshot.FetchedAt, _lastCreditPercent, pacePercent,
+            withForecast ? _sessionForecast.LimitIn : null,
+            withForecast ? _weeklyForecast.LimitIn : null);
+
+        SetNotifyIconText(
+            Summary(WeeklyPacePercent, withForecast: true),
+            Summary(null, withForecast: true),
+            Summary(null, withForecast: false));
     }
 
     private void ApplyWeeklyMenuText(UsageSnapshot snapshot) =>
@@ -599,20 +761,19 @@ public sealed class UsageTrayContext : ApplicationContext
     /// <summary>Records the tooltip text for the current state and applies it, appending
     /// the "update available" line when applicable so it survives later re-application via
     /// <see cref="ApplyTooltipText"/> (e.g. when update availability changes).</summary>
-    /// <param name="compactText">Shorter variant of <paramref name="baseText"/>, used instead
-    /// when the full text plus the update line wouldn't fit in <see cref="MaxTooltipLength"/>.</param>
-    private void SetNotifyIconText(string baseText, string? compactText = null)
+    /// <param name="candidates">The text, most detailed first, optionally followed by
+    /// shorter variants: the first one that fits in <see cref="MaxTooltipLength"/> together
+    /// with the update line is shown, else the last one, truncated.</param>
+    private void SetNotifyIconText(params string[] candidates)
     {
-        _baseTooltipText = baseText;
-        _compactTooltipText = compactText;
+        _tooltipCandidates = candidates;
         ApplyTooltipText();
     }
 
     private void ApplyTooltipText()
     {
-        var text = WithUpdateLine(_baseTooltipText);
-        if (text.Length > MaxTooltipLength && _compactTooltipText is { } compact)
-            text = WithUpdateLine(compact);
+        var text = _tooltipCandidates.Select(WithUpdateLine).FirstOrDefault(t => t.Length <= MaxTooltipLength)
+            ?? WithUpdateLine(_tooltipCandidates[^1]);
         _notifyIcon.Text = Truncate(text, MaxTooltipLength);
     }
 
@@ -641,6 +802,20 @@ public sealed class UsageTrayContext : ApplicationContext
         else if (snapshot.WeeklyPercent < WarnThresholdPercent)
         {
             _weeklyWarningShown = false;
+        }
+
+        if (_sessionForecast.LimitIn is { } limitIn && limitIn <= ForecastWarnWithin)
+        {
+            if (!_sessionForecastWarningShown)
+            {
+                _notifyIcon.ShowBalloonTip(8000, Strings.AppTitle, Strings.BalloonSessionForecast(limitIn), ToolTipIcon.Warning);
+                _sessionForecastWarningShown = true;
+            }
+        }
+        else if (_sessionForecast.LimitIn is not { } later || later > ForecastRearmAbove)
+        {
+            // No forecast any more (idle, reset first, new session) or comfortably far away.
+            _sessionForecastWarningShown = false;
         }
     }
 

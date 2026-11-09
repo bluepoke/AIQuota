@@ -40,7 +40,15 @@ public sealed record UsageSnapshot(
     DateTimeOffset FetchedAt,
     decimal? CreditUsed = null,
     decimal? CreditLimit = null,
-    string? CreditCurrency = null);
+    string? CreditCurrency = null,
+    double? SessionUtilization = null,
+    double? WeeklyUtilization = null);
+
+/// <summary>The signed-in account, from the profile endpoint.</summary>
+/// <param name="Id">Stable identifier (the account UUID, else the email) - keys the local
+/// usage history; null if the profile carries neither.</param>
+/// <param name="DisplayLabel">"Name (email)", just the name, or just the email.</param>
+public sealed record AccountInfo(string? Id, string? DisplayLabel);
 
 public enum UsageFetchStatus
 {
@@ -91,7 +99,9 @@ public sealed class UsageApiClient(OAuthClient oauth)
                 DateTimeOffset.Now,
                 spend?.used.Value,
                 spend?.limit.Value,
-                spend?.used.Currency);
+                spend?.used.Currency,
+                data.FiveHour is { } fiveHour ? Math.Clamp(fiveHour.Utilization, 0, 100) : null,
+                data.SevenDay is { } sevenDay ? Math.Clamp(sevenDay.Utilization, 0, 100) : null);
 
             return new UsageFetchResult(UsageFetchStatus.Ok, snapshot);
         }
@@ -119,12 +129,13 @@ public sealed class UsageApiClient(OAuthClient oauth)
 
     /// <summary>
     /// Calls the same GET /api/oauth/profile endpoint the official CLI uses to resolve
-    /// the signed-in account's display name and email (neither is carried by the access
-    /// token itself). Returns "Name (email)", just the name, or just the email,
-    /// depending on what the account has set. Returns null on any failure - this is a
-    /// "nice to have" label, not critical data.
+    /// the signed-in account (not carried by the access token itself): its UUID as a stable
+    /// ID, and a display label of "Name (email)", just the name, or just the email,
+    /// depending on what the account has set. Returns null on any failure - the label is a
+    /// "nice to have", and without an ID the usage history just isn't recorded until the
+    /// next successful attempt.
     /// </summary>
-    public async Task<string?> FetchAccountNameAsync(CancellationToken cancellationToken)
+    public async Task<AccountInfo?> FetchAccountAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -161,13 +172,21 @@ public sealed class UsageApiClient(OAuthClient oauth)
                     ? emailText
                     : null;
 
-            return (name, email) switch
+            string? uuid = account.TryGetProperty("uuid", out var uuidValue) &&
+                uuidValue.ValueKind == System.Text.Json.JsonValueKind.String &&
+                uuidValue.GetString() is { Length: > 0 } uuidText
+                    ? uuidText
+                    : null;
+
+            var label = (name, email) switch
             {
                 ({ } n, { } e) => $"{n} ({e})",
                 ({ } n, null) => n,
                 (null, { } e) => e,
                 _ => null,
             };
+
+            return new AccountInfo(uuid ?? email, label);
         }
         catch (HttpRequestException)
         {

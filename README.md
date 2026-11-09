@@ -25,10 +25,10 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 ![Tooltip showing session, week, and credits usage](screenshots/claude_usage_tooltip.png)
 
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
-usage credit balance (used/limit, when available), manual refresh, login/logout,
-run-at-startup toggle, a session countdown ring toggle, a weekly pace marker toggle, a
-Stream Dock controller toggle,
-a check-for-new-version toggle, and a language switch (German/English):
+a burn-rate forecast, usage credit balance (used/limit, when available), manual refresh,
+login/logout, usage history export/clear, run-at-startup toggle, a session countdown ring
+toggle, a weekly pace marker toggle, a Stream Dock controller toggle, a
+check-for-new-version toggle, and a language switch (German/English):
 
 ![Right-click menu with account, usage, and app options](screenshots/claude_usage_rmb_menu.png)
 
@@ -39,7 +39,8 @@ credentials — you log in once via your browser, and the token is encrypted on 
 your Windows user account only.
 
 If your usage crosses 90% for either window, you'll get a one-time balloon
-notification.
+notification. You'll also get one when, at your current rate, the session is on track to
+hit its limit within 30 minutes (see [Usage history and forecast](#usage-history-and-forecast)).
 
 ### Session countdown ring
 
@@ -98,6 +99,47 @@ new version available, it can reach Windows' 127-character limit), it leaves out
 
 It can be turned off under **Settings → Show weekly pace marker**, which also removes the
 pace value from the tooltip and the menu.
+
+### Usage history and forecast
+
+Every successful refresh is saved to a local usage history. The app uses it to forecast
+when you'll hit a limit if you keep going at your current rate:
+
+- In the right-click menu, an indented line under the session and week entries shows
+  either `↳ Limit in ~40min at current rate` or `↳ On track to reset first`. There's no
+  line when there isn't enough recent data yet, when your usage isn't rising, or before a
+  session has started.
+- The tooltip adds ` · limit ~40min` to the session or week line when the limit is forecast
+  to come before the reset. If the tooltip would get too long, it leaves out the pace value
+  first and then the forecast.
+- When the session is forecast to hit its limit within 30 minutes, you get a one-time
+  notification. You only get another one after the forecast has gone back above 45 minutes
+  (or away).
+
+How the rate is worked out:
+
+- **Session**: from the last 30 minutes, with at least 3 refreshes spanning at least 10
+  minutes. A gap of more than 15 minutes (PC asleep, app closed) starts over, so only
+  recent, unbroken usage counts.
+- **Week**: from the last 24 hours, with at least 6 hours of data, so one heavy session
+  isn't extrapolated over the whole week. Gaps don't start over here: weekly usage only
+  goes up within a week, so the average across a night is still correct, and it includes
+  what you used on other devices in the meantime.
+- Only data from the current window counts. After a reset, the forecast starts from
+  scratch.
+
+The history stays on your PC. Nothing is sent anywhere.
+
+- **Location**: `%LOCALAPPDATA%\AIQuota\history\`. Each signed-in account has its own file,
+  named by a hash of the account ID, so accounts never mix.
+- **Format**: one JSON object per line, with the time, session and week usage, their reset
+  times, and the credit balance (when your plan reports one).
+- **Retention**: entries older than 35 days are deleted automatically.
+- Logging out keeps the history. **Usage history → Clear history…** deletes it for all
+  accounts.
+- **Usage history → Export as CSV…** saves the signed-in account's history as a CSV file.
+  It uses the list and decimal separators from your Windows region settings, so it opens
+  as proper columns in Excel on German and English systems alike.
 
 ## Installation
 
