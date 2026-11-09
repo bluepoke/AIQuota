@@ -46,7 +46,9 @@ flyouts. It shows:
 - your account, when the data was last updated, and a refresh button
 - the session, week and (when your plan has them) credit usage as large bars, with the
   reset time as both clock time and countdown (`Resets 14:30 · in 1.6h`)
-- the [weekly pace marker](#weekly-pace-marker) on the week bar
+- a [pace marker](#weekly-pace-marker) on the week bar, and one on the session bar for an
+  even spread over the 5 hours (`Resets 14:30 · in 1.6h · pace 68%`; not shown before a
+  session starts)
 - the [burn-rate forecast](#usage-history-and-forecast) under each bar
 - a chart of your weekly usage over the **last 7 days**
 
@@ -140,7 +142,8 @@ percentage, e.g. `Week: 62% (2d3h) · pace 43%`. If the tooltip would get too lo
 new version available, it can reach Windows' 127-character limit), it leaves out the pace.
 
 It can be turned off under **Settings → Show weekly pace marker**, which also removes the
-pace value from the tooltip and the menu.
+pace value from the tooltip and the menu, and both pace markers from the
+[flyout](#tray-flyout).
 
 ### Usage history and forecast
 

@@ -711,7 +711,7 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private void ApplyWeeklyMenuText(UsageSnapshot snapshot) =>
         _weeklyItem.Text = Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(snapshot.WeeklyResetsAt))
-            + Strings.WeeklyPaceSuffix(WeeklyPacePercent);
+            + Strings.PaceSuffix(WeeklyPacePercent);
 
     private void SetIcon(Icon icon)
     {

@@ -145,7 +145,7 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
     menu.Items.Add(Item(Strings.UserLabel(Account), false));
     menu.Items.Add(Item(Strings.SessionLabel(72, Strings.FormatReset(sessionReset)), false));
     menu.Items.Add(Item(Strings.ForecastLimitIn(TimeSpan.FromMinutes(38)), false));
-    menu.Items.Add(Item(Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(weeklyReset)) + Strings.WeeklyPaceSuffix((int)Math.Round(WeeklyPacePercent())), false));
+    menu.Items.Add(Item(Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(weeklyReset)) + Strings.PaceSuffix((int)Math.Round(WeeklyPacePercent())), false));
     menu.Items.Add(Item(Strings.ForecastResetFirst, false));
     menu.Items.Add(Item(Strings.CreditsLabel(12.34m, 50m, "EUR"), false));
     menu.Items.Add(Item(Strings.StatusUpdated(snapshot.FetchedAt), false));

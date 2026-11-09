@@ -422,13 +422,20 @@ internal sealed class UsageFlyout : Form
         if (_state.Snapshot is not { } snapshot)
             return y - S(12f) + S(Pad);
 
-        // Session
+        // Session - with a pace marker like the week's (the same setting turns both on/off),
+        // here for an even spread over the 5 hours. None before a session starts: there's no
+        // clock running yet.
+        double? sessionPace = !_state.SessionNotStarted && snapshot.SessionResetsAt is { } resetForPace
+            ? UsageWindows.SessionPaceFraction(resetForPace, now)
+            : null;
         y = DrawTitleRow(g, Strings.FlyoutSessionTitle, $"{snapshot.SessionPercent}%", left, y, width);
-        DrawBar(g, new RectangleF(left, y, width, S(8f)), snapshot.SessionPercent, _state.SessionNotStarted, paceFraction: null);
+        DrawBar(g, new RectangleF(left, y, width, S(8f)), snapshot.SessionPercent, _state.SessionNotStarted,
+            paceFraction: _state.ShowPaceMarker ? sessionPace : null);
         y += S(8f) + S(6f);
         var sessionDetail = _state.SessionNotStarted || snapshot.SessionResetsAt is not { } sessionReset
             ? Strings.FlyoutSessionNotStarted
-            : Strings.FlyoutResetLine(sessionReset, now);
+            : Strings.FlyoutResetLine(sessionReset, now)
+                + (_state.ShowPaceMarker && sessionPace is { } sp ? Strings.PaceSuffix((int)Math.Round(sp * 100)) : "");
         DrawText(g, sessionDetail, _bodyFont, _palette.Secondary, new RectangleF(left, y, width, S(18f)));
         y += S(18f);
         y = DrawForecast(g, _state.SessionForecast, left, y, width);
@@ -443,7 +450,7 @@ internal sealed class UsageFlyout : Form
         if (snapshot.WeeklyResetsAt is { } weeklyReset)
         {
             var weekDetail = Strings.FlyoutResetLine(weeklyReset, now)
-                + (_state.ShowPaceMarker && pace is { } p ? Strings.WeeklyPaceSuffix((int)Math.Round(p * 100)) : "");
+                + (_state.ShowPaceMarker && pace is { } p ? Strings.PaceSuffix((int)Math.Round(p * 100)) : "");
             DrawText(g, weekDetail, _bodyFont, _palette.Secondary, new RectangleF(left, y, width, S(18f)));
             y += S(18f);
         }
@@ -494,8 +501,8 @@ internal sealed class UsageFlyout : Form
     }
 
     /// <summary>A large usage bar: the same track/fill/colour rules as the tray icon's (an
-    /// outline-only track before a session starts), plus - for the week - the pace marker as
-    /// a tick that sticks out a little above and below the bar.</summary>
+    /// outline-only track before a session starts), plus - for the session and the week - the
+    /// pace marker as a tick that sticks out a little above and below the bar.</summary>
     private void DrawBar(Graphics? g, RectangleF rect, int percent, bool outlineOnly, double? paceFraction)
     {
         if (g is null)

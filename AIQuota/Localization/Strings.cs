@@ -194,7 +194,7 @@ public static class Strings
     public static string StatusUpdated(DateTimeOffset time) => T($"Stand: {time:HH:mm:ss}", $"Updated: {time:HH:mm:ss}");
 
     /// <param name="weeklyPacePercent">Where even usage over the week would be by now - appended
-    /// to the week line as <see cref="WeeklyPaceSuffix"/> when set.</param>
+    /// to the week line as <see cref="PaceSuffix"/> when set.</param>
     /// <param name="sessionLimitIn">Forecast time until the session limit - appended to the
     /// session line as <see cref="ForecastTooltipSuffix"/> when set.</param>
     /// <param name="weeklyLimitIn">Same for the week line.</param>
@@ -202,7 +202,7 @@ public static class Strings
     {
         var sessionRemaining = (sessionResetsAt is null ? SessionNotStartedSuffix : FormatCompactRemaining(sessionResetsAt))
             + ForecastTooltipSuffix(sessionLimitIn);
-        var weeklyRemaining = FormatCompactRemaining(weeklyResetsAt) + WeeklyPaceSuffix(weeklyPacePercent)
+        var weeklyRemaining = FormatCompactRemaining(weeklyResetsAt) + PaceSuffix(weeklyPacePercent)
             + ForecastTooltipSuffix(weeklyLimitIn);
         var time = fetchedAt.ToLocalTime().ToString("HH:mm");
         var creditsLine = creditPercent is { } cp ? T($"\nGuthaben: {cp}%", $"\nCredits: {cp}%") : "";
@@ -257,9 +257,10 @@ public static class Strings
     public static string WeeklyLabel(int percent, string resetSuffix) =>
         T($"Woche: {percent}%{resetSuffix}", $"Week: {percent}%{resetSuffix}");
 
-    /// <summary>Appended to the week percentage, in the tooltip and the context menu, with the
-    /// weekly pace (e.g. " · pace 43%"); empty when there's no pace to show.</summary>
-    public static string WeeklyPaceSuffix(int? pacePercent) =>
+    /// <summary>Appended to a usage line with its pace (e.g. " · pace 43%"): the week in the
+    /// tooltip, context menu and flyout, the session in the flyout. Empty when there's no
+    /// pace to show.</summary>
+    public static string PaceSuffix(int? pacePercent) =>
         pacePercent is { } p ? T($" · Pace {p}%", $" · pace {p}%") : "";
 
     // Built by hand rather than via CultureInfo.GetCultureInfo("de-DE") because the app runs
