@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Regenerates the README screenshots in /screenshots from AIQuota's own rendering code
+       with mocked data. Usage: see the header of Program.cs.
+       Deliberately not part of AIQuota.sln, so release builds don't include it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Same as AIQuota: date/number formatting must match what the app produces. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\AIQuota\AIQuota.csproj" />
+  </ItemGroup>
+
+</Project>

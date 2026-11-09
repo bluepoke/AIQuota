@@ -17,6 +17,12 @@ The tray icon shows two or three stacked bars:
 - **Middle bar** — your current 7-day (weekly) usage
 - **Bottom bar** — your usage credit balance, shown only when your plan reports one
 
+![Tray icon in five typical states on a dark and a light taskbar, enlarged and at actual size](screenshots/tray_icon_states.png)
+
+The icon also shows the [session countdown ring](#session-countdown-ring) around the bars,
+the [weekly pace marker](#weekly-pace-marker) on the week bar, and a yellow dot when a new
+version is available.
+
 Each bar is colour-coded (green ≤ 50%, yellow 50–80%, red > 80%) so you can tell your
 usage level without reading a number. Hover over the icon for exact percentages plus
 the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
@@ -30,7 +36,7 @@ login/logout, usage history export/clear, run-at-startup toggle, a session count
 toggle, a weekly pace marker toggle, a Stream Dock controller toggle, a
 check-for-new-version toggle, and a language switch (German/English):
 
-![Right-click menu with account, usage, and app options](screenshots/claude_usage_rmb_menu.png)
+![Right-click menu with account, usage with forecast, credits, and app options](screenshots/context_menu.png)
 
 ### Tray flyout
 
@@ -43,6 +49,11 @@ flyouts. It shows:
 - the [weekly pace marker](#weekly-pace-marker) on the week bar
 - the [burn-rate forecast](#usage-history-and-forecast) under each bar
 - a chart of your weekly usage over the **last 7 days**
+
+<p>
+  <img src="screenshots/flyout_dark.png" width="372" alt="Tray flyout, dark theme: session, week and credit bars with reset times and forecast, and a 7-day chart of weekly usage against the even pace">
+  <img src="screenshots/flyout_light.png" width="372" alt="The same tray flyout in the light theme">
+</p>
 
 In the chart:
 
@@ -260,6 +271,15 @@ dotnet publish AIQuota -c Release -r win-x64 --self-contained true -p:PublishSin
 # framework-dependent (smaller, requires the .NET 9 Desktop Runtime on the target machine)
 dotnet publish AIQuota -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o publish
 ```
+
+The screenshots in [`screenshots/`](screenshots/) (except the tooltip) are generated from
+the app's own rendering code with mock data, so they can be refreshed after UI changes:
+
+```
+dotnet run --project tools/Screenshots
+```
+
+See [`tools/Screenshots/Program.cs`](tools/Screenshots/Program.cs) for what it renders.
 
 Releases are built automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml)
 whenever a tag matching `v*.*.*` is pushed.

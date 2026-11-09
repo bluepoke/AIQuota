@@ -1,0 +1,264 @@
+// Regenerates the README screenshots from AIQuota's real rendering code with mocked data:
+//
+//     dotnet run --project tools/Screenshots [output directory]
+//
+// Writes tray_icon_states.png, context_menu.png, flyout_dark.png and flyout_light.png to the
+// repository's screenshots/ folder (or the given directory).
+//
+// - Tray icon and flyout are drawn by the app's own TrayIconFactory and UsageFlyout. Their
+//   drawing methods and fields are private, so they're reached by reflection - if a rename
+//   breaks this tool, update the names here.
+// - The context menu is a ContextMenuStrip with the same structure and Strings texts as the
+//   app's menu. Building the real UsageTrayContext would start network calls and add a
+//   second tray icon.
+// - Never shows a window (everything is drawn offscreen) and never touches the signed-in
+//   account, the usage history or saved settings: the language is switched to English in
+//   memory only.
+// - Times are relative to now, so the images differ slightly from run to run.
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Reflection;
+using AIQuota;
+using AIQuota.History;
+using AIQuota.Localization;
+
+Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+var outDir = args.Length > 0 ? args[0] : Path.Combine(FindRepositoryRoot(), "screenshots");
+Directory.CreateDirectory(outDir);
+Console.WriteLine($"Writing screenshots to {Path.GetFullPath(outDir)}");
+
+const BindingFlags PrivStatic = BindingFlags.NonPublic | BindingFlags.Static;
+const BindingFlags PrivInst = BindingFlags.NonPublic | BindingFlags.Instance;
+var asm = typeof(UsageSnapshot).Assembly;
+
+// English, in memory only (Strings.SetLanguage would persist the preference).
+typeof(Strings).GetProperty("Current")!.SetValue(null, Enum.Parse(asm.GetType("AIQuota.Localization.AppLanguage")!, "English"));
+
+var now = DateTimeOffset.Now;
+const string Account = "Jane Doe (jane@example.com)";
+
+// ------------------------------------------------------------------ tray icon states
+{
+    var drawBars = typeof(TrayIconFactory).GetMethod("DrawBars", PrivStatic)!;
+    var drawRing = typeof(TrayIconFactory).GetMethod("DrawSessionRing", PrivStatic)!;
+    var drawBadge = typeof(TrayIconFactory).GetMethod("DrawUpdateBadge", PrivStatic)!;
+
+    Bitmap Icon(int session, int week, int? credit, double? ring, bool notStarted, double? pace, bool badge, bool isLight, int px)
+    {
+        var bmp = new Bitmap(px, px);
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Color.Transparent);
+        g.ScaleTransform(px / 32f, px / 32f);   // the factory draws on a fixed 32px canvas
+        drawBars.Invoke(null, [g, session, week, credit, 32, isLight, notStarted, pace]);
+        if (ring is { } r) drawRing.Invoke(null, [g, r, 32, isLight, notStarted]);
+        if (badge) drawBadge.Invoke(null, [g, 32]);
+        return bmp;
+    }
+
+    var states = new (string Label, int S, int W, int? C, double? Ring, bool NotStarted, double? Pace, bool Badge)[]
+    {
+        ("3.2h left, ahead of pace", 37, 62, null, 3.2 / 5, false, 0.43, false),
+        ("With usage credits", 72, 41, 25, 1.6 / 5, false, 0.33, false),
+        ("Session not started", 0, 20, null, 1.0, true, 0.30, false),
+        ("Nearly used up", 93, 85, null, 0.6 / 5, false, 0.71, false),
+        ("Update available", 55, 48, null, 4.1 / 5, false, 0.60, true),
+    };
+
+    const int cellW = 150, big = 96, rowH = 170;
+    using var sheet = new Bitmap(cellW * states.Length + 24, rowH * 2);
+    using (var g = Graphics.FromImage(sheet))
+    {
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        foreach (var (row, isLight) in new[] { (0, false), (1, true) })
+        {
+            var bg = isLight ? Color.FromArgb(238, 238, 238) : Color.FromArgb(32, 32, 32);
+            var fg = isLight ? Color.FromArgb(40, 40, 40) : Color.FromArgb(225, 225, 225);
+            using (var b = new SolidBrush(bg)) g.FillRectangle(b, 0, row * rowH, sheet.Width, rowH);
+            using var font = new Font("Segoe UI", 12f, GraphicsUnit.Pixel);
+            using var small = new Font("Segoe UI", 11f, GraphicsUnit.Pixel);
+            using var fgBrush = new SolidBrush(fg);
+            using var dimBrush = new SolidBrush(Color.FromArgb(150, fg));
+            using var center = new StringFormat { Alignment = StringAlignment.Center };
+            g.DrawString(isLight ? "Light taskbar" : "Dark taskbar", small, dimBrush, 12, row * rowH + 6);
+
+            for (var i = 0; i < states.Length; i++)
+            {
+                var s = states[i];
+                var x = 12 + i * cellW;
+                var y = row * rowH + 26;
+                using (var icon = Icon(s.S, s.W, s.C, s.Ring, s.NotStarted, s.Pace, s.Badge, isLight, big))
+                    g.DrawImage(icon, x + (cellW - big) / 2 - 14, y);
+                // Actual tray size next to it (24px = 16px icon at 150% scaling).
+                using (var icon = Icon(s.S, s.W, s.C, s.Ring, s.NotStarted, s.Pace, s.Badge, isLight, 24))
+                    g.DrawImage(icon, x + (cellW - big) / 2 - 14 + big + 8, y + big - 24);
+                g.DrawString(s.Label, font, fgBrush, new RectangleF(x, y + big + 10, cellW - 8, 36), center);
+            }
+        }
+    }
+    sheet.Save(Path.Combine(outDir, "tray_icon_states.png"), ImageFormat.Png);
+}
+
+// ------------------------------------------------------------------ mock usage history
+var weeklyReset = now + TimeSpan.FromDays(3.6);          // current window started 3.4 days ago
+var sessionReset = now + TimeSpan.FromHours(1.6);
+var history = new List<UsageHistoryRecord>();
+{
+    var rnd = new Random(42);
+    var windowStart = weeklyReset - TimeSpan.FromDays(7);
+    var cumulative = 0.0;
+    var t0 = now - TimeSpan.FromDays(7);
+    // Start the previous window's running total where it would be by then.
+    cumulative = 24;
+    for (var t = t0; t <= now; t += TimeSpan.FromMinutes(5))
+    {
+        if (t >= windowStart && t - TimeSpan.FromMinutes(5) < windowStart)
+            cumulative = 0;                                      // weekly reset
+        var local = t.ToLocalTime();
+        var weekend = local.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+        var running = !weekend && local.Hour >= 8 && local.Hour < 19;
+        if (!running && t < now - TimeSpan.FromMinutes(30))
+            continue;                                            // PC off: gap
+        var busy = local.Hour is >= 9 and < 12 or >= 13 and < 17;
+        cumulative = Math.Min(100, cumulative + (busy ? 0.10 + rnd.NextDouble() * 0.16 : 0.02 + rnd.NextDouble() * 0.05));
+        var reset = t >= windowStart ? weeklyReset : windowStart;
+        history.Add(new UsageHistoryRecord(t, 40, sessionReset, cumulative, reset));
+    }
+}
+var weekNow = history[^1].Week;
+var snapshot = new UsageSnapshot(72, (int)Math.Round(weekNow), sessionReset, weeklyReset, now - TimeSpan.FromMinutes(2),
+    12.34m, 50m, "EUR", 72.3, weekNow);
+double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) * 100;
+
+// ------------------------------------------------------------------ context menu
+{
+    var menu = new ContextMenuStrip { ShowImageMargin = true };
+    ToolStripMenuItem Item(string text, bool enabled = true) => new(text) { Enabled = enabled };
+    var history_ = Item(Strings.MenuHistory);
+    history_.DropDownItems.Add(Strings.MenuHistoryExport);
+    var settings = Item(Strings.MenuSettings);
+    settings.DropDownItems.Add(Strings.MenuStartup);
+    var about = Item(Strings.MenuAbout);
+    about.DropDownItems.Add(Strings.MenuGitHub);
+
+    menu.Items.Add(Item(Strings.UserLabel(Account), false));
+    menu.Items.Add(Item(Strings.SessionLabel(72, Strings.FormatReset(sessionReset)), false));
+    menu.Items.Add(Item(Strings.ForecastLimitIn(TimeSpan.FromMinutes(38)), false));
+    menu.Items.Add(Item(Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(weeklyReset)) + Strings.WeeklyPaceSuffix((int)Math.Round(WeeklyPacePercent())), false));
+    menu.Items.Add(Item(Strings.ForecastResetFirst, false));
+    menu.Items.Add(Item(Strings.CreditsLabel(12.34m, 50m, "EUR"), false));
+    menu.Items.Add(Item(Strings.StatusUpdated(snapshot.FetchedAt), false));
+    menu.Items.Add(new ToolStripSeparator());
+    menu.Items.Add(Item(Strings.MenuRefresh));
+    menu.Items.Add(Item(Strings.MenuLogout));
+    menu.Items.Add(history_);
+    menu.Items.Add(settings);
+    menu.Items.Add(about);
+    menu.Items.Add(new ToolStripSeparator());
+    menu.Items.Add(Item(Strings.MenuExit));
+
+    _ = menu.Handle;                       // create the window without showing it
+    menu.PerformLayout();
+    var size = menu.GetPreferredSize(Size.Empty);
+    menu.Size = size;
+    using var bmp = new Bitmap(size.Width, size.Height);
+    menu.DrawToBitmap(bmp, new Rectangle(Point.Empty, size));
+    using var framed = Frame(bmp, radius: 0, light: true);
+    framed.Save(Path.Combine(outDir, "context_menu.png"), ImageFormat.Png);
+    menu.Dispose();
+}
+
+// ------------------------------------------------------------------ flyout
+{
+    var flyoutType = asm.GetType("AIQuota.UsageFlyout")!;
+    var stateType = asm.GetType("AIQuota.FlyoutState")!;
+    var paletteType = flyoutType.GetNestedType("Palette", BindingFlags.NonPublic)!;
+
+    var state = Activator.CreateInstance(stateType,
+        true, Account, Strings.StatusUpdated(snapshot.FetchedAt), false, snapshot, 25, false, true,
+        new UsageForecast(ForecastKind.Limit, TimeSpan.FromMinutes(38)), new UsageForecast(ForecastKind.ResetFirst),
+        (IReadOnlyList<UsageHistoryRecord>)history)!;
+    var getter = Delegate.CreateDelegate(typeof(Func<>).MakeGenericType(stateType), new Holder(state),
+        typeof(Holder).GetMethod(nameof(Holder.Get))!.MakeGenericMethod(stateType));
+
+    foreach (var light in new[] { false, true })
+    {
+        var flyout = (Form)Activator.CreateInstance(flyoutType, getter, (Func<Task>)(() => Task.CompletedTask))!;
+        flyoutType.GetField("_palette", PrivInst)!.SetValue(flyout, paletteType.GetMethod("For")!.Invoke(null, [light]));
+        flyoutType.GetField("_scale", PrivInst)!.SetValue(flyout, 2f);
+        flyoutType.GetMethod("ApplyLayout", PrivInst)!.Invoke(flyout, null);
+
+        using var bmp = new Bitmap(flyout.ClientSize.Width, flyout.ClientSize.Height);
+        flyout.DrawToBitmap(bmp, new Rectangle(Point.Empty, flyout.ClientSize));
+        var button = (Button)flyoutType.GetField("_refreshButton", PrivInst)!.GetValue(flyout)!;
+        using (var buttonBmp = new Bitmap(button.Width, button.Height))
+        {
+            button.DrawToBitmap(buttonBmp, new Rectangle(Point.Empty, button.Size));
+            using var g = Graphics.FromImage(bmp);
+            g.DrawImage(buttonBmp, button.Location);
+        }
+        flyout.Dispose();
+
+        using var framed = Frame(bmp, radius: 16, light: light);
+        framed.Save(Path.Combine(outDir, light ? "flyout_light.png" : "flyout_dark.png"), ImageFormat.Png);
+    }
+}
+
+Console.WriteLine("done");
+
+// The folder containing AIQuota.sln, searched upwards from the tool's build output.
+static string FindRepositoryRoot()
+{
+    for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+    {
+        if (File.Exists(Path.Combine(dir.FullName, "AIQuota.sln")))
+            return dir.FullName;
+    }
+    throw new InvalidOperationException("Could not find the repository root (AIQuota.sln); pass an output directory.");
+}
+
+// Puts an image on a neutral backdrop with rounded corners, a hairline border and a soft
+// shadow - roughly how Windows 11 presents menus and flyouts.
+static Bitmap Frame(Bitmap content, int radius, bool light)
+{
+    const int margin = 28;
+    var result = new Bitmap(content.Width + 2 * margin, content.Height + 2 * margin);
+    using var g = Graphics.FromImage(result);
+    g.SmoothingMode = SmoothingMode.AntiAlias;
+    g.Clear(Color.Transparent);
+
+    var rect = new Rectangle(margin, margin, content.Width, content.Height);
+    for (var i = 14; i >= 1; i--)
+    {
+        using var shadowPath = Rounded(new RectangleF(rect.X - i + 2, rect.Y - i + 6, rect.Width + 2 * i - 4, rect.Height + 2 * i - 4), radius + i);
+        using var shadow = new SolidBrush(Color.FromArgb(5, 0, 0, 0));
+        g.FillPath(shadow, shadowPath);
+    }
+
+    using var path = Rounded(rect, radius);
+    using var texture = new TextureBrush(content) { WrapMode = WrapMode.Clamp };
+    texture.TranslateTransform(rect.X, rect.Y);
+    g.FillPath(texture, path);
+    using var border = new Pen(light ? Color.FromArgb(60, 0, 0, 0) : Color.FromArgb(90, 255, 255, 255), 1.5f);
+    g.DrawPath(border, path);
+    return result;
+}
+
+static GraphicsPath Rounded(RectangleF r, float radius)
+{
+    var path = new GraphicsPath();
+    if (radius <= 0) { path.AddRectangle(r); return path; }
+    var d = radius * 2;
+    path.AddArc(r.X, r.Y, d, d, 180, 90);
+    path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+    path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+    path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+    path.CloseFigure();
+    return path;
+}
+
+sealed class Holder(object state)
+{
+    public T Get<T>() => (T)state;
+}
