@@ -129,7 +129,7 @@ internal static class DeckKeyRenderer
             // corners instead of being stretched to a minimum height.
             var fillRect = new RectangleF(rect.X, rect.Bottom - fillHeight, rect.Width, fillHeight);
             using var fillPath = RoundedRect(fillRect, Math.Min(SingleValueBarRadius, fillHeight / 2f));
-            using var fillBrush = new SolidBrush(ColorForPercent(clamped));
+            using var fillBrush = new SolidBrush(UsagePalette.ColorForPercent(clamped));
             var previousClip = g.Clip;
             g.SetClip(trackPath, CombineMode.Intersect);
             g.FillPath(fillBrush, fillPath);
@@ -228,7 +228,7 @@ internal static class DeckKeyRenderer
         {
             var fillRect = new RectangleF(rect.X, rect.Y, Math.Min(fillWidth, rect.Width), rect.Height);
             using var fillPath = RoundedRect(fillRect, radius);
-            using var fillBrush = new SolidBrush(ColorForPercent(clamped));
+            using var fillBrush = new SolidBrush(UsagePalette.ColorForPercent(clamped));
             g.FillPath(fillBrush, fillPath);
         }
 
@@ -457,10 +457,4 @@ internal static class DeckKeyRenderer
         return path;
     }
 
-    private static Color ColorForPercent(int percent) => percent switch
-    {
-        > 80 => Color.FromArgb(235, 70, 70),
-        > 50 => Color.FromArgb(240, 170, 60),
-        _ => Color.FromArgb(90, 190, 110),
-    };
 }

@@ -369,7 +369,7 @@ public static class TrayIconFactory
         {
             var fillRect = new Rectangle(rect.X, rect.Y, Math.Min(fillWidth, rect.Width), rect.Height);
             using var fillPath = RoundedRect(fillRect, radius);
-            using var fillBrush = new SolidBrush(ColorForPercent(clamped));
+            using var fillBrush = new SolidBrush(UsagePalette.ColorForPercent(clamped));
             g.FillPath(fillBrush, fillPath);
         }
     }
@@ -425,12 +425,6 @@ public static class TrayIconFactory
     private static Color TrackColor(bool isLight) =>
         isLight ? Color.FromArgb(127, Color.Black) : Color.FromArgb(127, Color.White);
 
-    private static Color ColorForPercent(int percent) => percent switch
-    {
-        > 80 => Color.FromArgb(235, 70, 70),
-        > 50 => Color.FromArgb(240, 170, 60),
-        _ => Color.FromArgb(90, 190, 110),
-    };
 
     private static Icon ToIcon(Bitmap bitmap)
     {

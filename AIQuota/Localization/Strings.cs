@@ -66,13 +66,72 @@ public static class Strings
         "Den gespeicherten Nutzungsverlauf aller Konten auf diesem PC löschen?\n\nDie Prognose startet danach ohne Daten neu.",
         "Delete the stored usage history of all accounts on this PC?\n\nThe forecast starts over without data afterwards.");
 
+    /// <summary>The burn-rate forecast, as shown in the tray flyout.</summary>
+    public static string ForecastLimitInText(TimeSpan timeToLimit) => T(
+        $"Limit in ~{FormatDuration(timeToLimit)} beim aktuellen Verbrauch",
+        $"Limit in ~{FormatDuration(timeToLimit)} at current rate");
+    public static string ForecastResetFirstText => T(
+        "Reset kommt beim aktuellen Verbrauch vor dem Limit",
+        "On track to reset first");
+
     /// <summary>Context menu line under the session/week entry: the burn-rate forecast.</summary>
-    public static string ForecastLimitIn(TimeSpan timeToLimit) => T(
-        $"    ↳ Limit in ~{FormatDuration(timeToLimit)} beim aktuellen Verbrauch",
-        $"    ↳ Limit in ~{FormatDuration(timeToLimit)} at current rate");
-    public static string ForecastResetFirst => T(
-        "    ↳ Reset kommt beim aktuellen Verbrauch vor dem Limit",
-        "    ↳ On track to reset first");
+    public static string ForecastLimitIn(TimeSpan timeToLimit) => "    ↳ " + ForecastLimitInText(timeToLimit);
+    public static string ForecastResetFirst => "    ↳ " + ForecastResetFirstText;
+
+    // Tray flyout (left-click on the tray icon).
+    public static string FlyoutSessionTitle => T("Sitzung (5h)", "Session (5h)");
+    public static string FlyoutWeekTitle => T("Woche", "Week");
+    public static string FlyoutCreditsTitle => T("Nutzungsguthaben", "Usage credits");
+    public static string FlyoutHistoryTitle => T("Letzte 7 Tage", "Last 7 days");
+    public static string FlyoutLegendUsage => T("Woche", "Week");
+    public static string FlyoutLegendPace => T("Pace", "Even pace");
+    /// <summary>Shown instead of the flyout's 7-day chart until there's enough history: at
+    /// least <paramref name="minPoints"/> data points, the first and last at least <paramref
+    /// name="minSpan"/> apart - with an estimate of how long that takes while the app keeps
+    /// running (<paramref name="remaining"/>; zero or less means the next refresh will do).</summary>
+    public static string FlyoutCollectingData(int minPoints, TimeSpan minSpan, TimeSpan remaining)
+    {
+        var eta = remaining > TimeSpan.Zero
+            ? T($"Noch ca. {FormatDuration(remaining)}, solange die App läuft.", $"About {FormatDuration(remaining)} to go while the app keeps running.")
+            : T("Mit dem nächsten Update.", "With the next refresh.");
+        return T(
+            $"Sammle Daten… Das Diagramm erscheint ab {minPoints} Datenpunkten mit insgesamt mindestens {FormatDuration(minSpan)} Abstand. {eta}",
+            $"Collecting data… The chart appears once there are at least {minPoints} data points spanning at least {FormatDuration(minSpan)} in total. {eta}");
+    }
+    public static string FlyoutRefreshing => T("Wird aktualisiert…", "Refreshing…");
+    public static string FlyoutSessionNotStarted => T(
+        "Nicht gestartet – beginnt mit deiner nächsten Nachricht",
+        "Not started – begins with your next message");
+
+    /// <summary>"Resets 14:30 · in 1.5h" - with the weekday ("Resets Monday 09:00 · …") when
+    /// the reset isn't today.</summary>
+    public static string FlyoutResetLine(DateTimeOffset resetsAt, DateTimeOffset now)
+    {
+        var local = resetsAt.ToLocalTime();
+        var when = local.Date == now.ToLocalTime().Date
+            ? $"{local:HH:mm}"
+            : $"{WeekdayName(local)} {local:HH:mm}";
+        var remaining = resetsAt - now;
+        var countdown = remaining <= TimeSpan.Zero ? T("in Kürze", "shortly") : $"in {FormatDuration(remaining)}";
+        return T($"Reset {when} · {countdown}", $"Resets {when} · {countdown}");
+    }
+
+    public static string CreditsAmount(decimal used, decimal limit, string currency) =>
+        T($"{FormatMoney(used)} {currency} von {FormatMoney(limit)} {currency}",
+          $"{FormatMoney(used)} {currency} of {FormatMoney(limit)} {currency}");
+
+    private static readonly string[] WeekdaysShortDe = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+    private static readonly string[] WeekdaysShortEn = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    public static string WeekdayShort(DateTimeOffset local) =>
+        (Current == AppLanguage.German ? WeekdaysShortDe : WeekdaysShortEn)[(int)local.DayOfWeek];
+
+    /// <summary>Hover label in the flyout's 7-day chart, e.g. "Mon 14:30 · 62%".</summary>
+    public static string FlyoutChartPoint(DateTimeOffset time, double percent)
+    {
+        var local = time.ToLocalTime();
+        return $"{WeekdayShort(local)} {local:HH:mm} · {Math.Round(percent):0}%";
+    }
 
     /// <summary>Appended to the session/week line in the tooltip when the limit is forecast to
     /// be reached before the reset (e.g. " · limit ~40min"); empty otherwise.</summary>

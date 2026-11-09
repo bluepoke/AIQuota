@@ -11,8 +11,6 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NewVersionCheckInterval = TimeSpan.FromHours(6);
-    private static readonly TimeSpan SessionWindow = TimeSpan.FromHours(5);
-    private static readonly TimeSpan WeekWindow = TimeSpan.FromDays(7);
     private const int WarnThresholdPercent = 90;
 
     /// <summary>Warn once when the session is forecast to hit its limit within this time...</summary>
@@ -62,6 +60,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly IUsageHistory _history = new JsonlUsageHistory();
     private readonly SynchronizationContext _uiContext;
     private StreamDockBridge? _streamDockBridge;
+    private UsageFlyout? _flyout;
 
     private bool _sessionWarningShown;
     private bool _weeklyWarningShown;
@@ -183,7 +182,10 @@ public sealed class UsageTrayContext : ApplicationContext
             ContextMenuStrip = menu,
             Visible = true,
         };
-        _notifyIcon.DoubleClick += async (_, _) => await RefreshAsync();
+        // Left-click opens the flyout. A double-click no longer refreshes (the flyout's refresh
+        // button and "Refresh now" do that): the flyout must open on the first click without
+        // waiting to see whether a second one follows, and keeps open on the second.
+        _notifyIcon.MouseClick += OnNotifyIconMouseClick;
         _notifyIcon.BalloonTipClicked += (_, _) => OnNewVersionClicked();
 
         _timer = new System.Windows.Forms.Timer { Interval = (int)PollInterval.TotalMilliseconds };
@@ -333,6 +335,7 @@ public sealed class UsageTrayContext : ApplicationContext
         ResetForecasts();
         if (_currentIconKind == IconKind.Usage && _lastUsageSnapshot is { } snapshot)
             ApplyUsageTooltip(snapshot);
+        UpdateFlyout();
     }
 
     private void OnToggleStartup(object? sender, EventArgs e)
@@ -349,8 +352,36 @@ public sealed class UsageTrayContext : ApplicationContext
     {
         if (e.Category == Microsoft.Win32.UserPreferenceCategory.General ||
             e.Category == Microsoft.Win32.UserPreferenceCategory.Color)
+        {
             RedrawIconForCurrentState();
+            UpdateFlyout();
+        }
     }
+
+    private void OnNotifyIconMouseClick(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left)
+            return;
+        _flyout ??= new UsageFlyout(BuildFlyoutState, RefreshAsync);
+        _flyout.Toggle(Cursor.Position);
+    }
+
+    /// <summary>Re-reads the flyout's state if it has been created - it only repaints while
+    /// it's open.</summary>
+    private void UpdateFlyout() => _flyout?.UpdateState();
+
+    private FlyoutState BuildFlyoutState() => new(
+        LoggedIn: _oauth.IsLoggedIn,
+        AccountLabel: _cachedAccountName,
+        StatusText: _statusItem.Text ?? "",
+        IsRefreshing: _refreshInProgress,
+        Snapshot: _lastUsageSnapshot,
+        CreditPercent: _lastCreditPercent,
+        SessionNotStarted: SessionNotStarted,
+        ShowPaceMarker: _showWeeklyPaceItem.Checked,
+        SessionForecast: _sessionForecast,
+        WeeklyForecast: _weeklyForecast,
+        History: _history.Records);
 
     private void OnToggleSessionRing(object? sender, EventArgs e)
     {
@@ -376,6 +407,7 @@ public sealed class UsageTrayContext : ApplicationContext
             if (_currentIconKind == IconKind.Usage)
                 ApplyUsageTooltip(snapshot);
         }
+        UpdateFlyout();
     }
 
     private void OnToggleStreamDock(object? sender, EventArgs e)
@@ -496,6 +528,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _currentIconKind = IconKind.Refreshing;
                 SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction));
             }
+            UpdateFlyout();
 
             var result = await _usageApi.FetchAsync(CancellationToken.None);
 
@@ -512,6 +545,7 @@ public sealed class UsageTrayContext : ApplicationContext
         finally
         {
             _refreshInProgress = false;
+            UpdateFlyout();
         }
     }
 
@@ -736,7 +770,7 @@ public sealed class UsageTrayContext : ApplicationContext
             return 1.0;
 
         var remaining = resetsAt - DateTimeOffset.Now;
-        return Math.Clamp(remaining / SessionWindow, 0.0, 1.0);
+        return Math.Clamp(remaining / UsageWindows.Session, 0.0, 1.0);
     }
 
     /// <summary>Elapsed fraction of the current 7-day window, i.e. where usage would be by now
@@ -750,8 +784,7 @@ public sealed class UsageTrayContext : ApplicationContext
             if (!_showWeeklyPaceItem.Checked || !_hasUsageSnapshot || _lastWeeklyResetsAt is not { } resetsAt)
                 return null;
 
-            var remaining = resetsAt - DateTimeOffset.Now;
-            return Math.Clamp(1.0 - remaining / WeekWindow, 0.0, 1.0);
+            return UsageWindows.WeeklyPaceFraction(resetsAt, DateTimeOffset.Now);
         }
     }
 
@@ -830,6 +863,7 @@ public sealed class UsageTrayContext : ApplicationContext
             _timer.Dispose();
             _newVersionCheckTimer.Dispose();
             _streamDockBridge?.Dispose();
+            _flyout?.Dispose();
             _notifyIcon.Visible = false;
             _notifyIcon.Icon?.Dispose();
             _notifyIcon.Dispose();

@@ -32,6 +32,37 @@ check-for-new-version toggle, and a language switch (German/English):
 
 ![Right-click menu with account, usage, and app options](screenshots/claude_usage_rmb_menu.png)
 
+### Tray flyout
+
+Left-click the icon for a flyout next to the taskbar, like the Windows volume and network
+flyouts. It shows:
+
+- your account, when the data was last updated, and a refresh button
+- the session, week and (when your plan has them) credit usage as large bars, with the
+  reset time as both clock time and countdown (`Resets 14:30 · in 1.6h`)
+- the [weekly pace marker](#weekly-pace-marker) on the week bar
+- the [burn-rate forecast](#usage-history-and-forecast) under each bar
+- a chart of your weekly usage over the **last 7 days**
+
+In the chart:
+
+- **Usage**: drawn as a line coloured like the bars, with gaps where the app wasn't
+  running.
+- **Even pace**: the dashed line, from 0% at the start of each weekly window to 100% at
+  its reset. The 7 days usually span a weekly reset, which is marked by a dotted line;
+  usage and pace both start again from 0 there.
+- **Now**: the dot at the right edge is your current usage, the ring is the current pace.
+- **Hover**: shows the time and value of the nearest data point.
+- **Not enough history yet**: the chart says it's still collecting data.
+
+Click the icon again, press `Esc`, or click anywhere else to close it. The flyout uses
+the data from the last refresh, so it opens instantly; while open, it updates after
+every refresh and keeps its countdowns current. It follows the Windows light/dark theme
+and your display scaling.
+
+A double-click opens the flyout too (the second click keeps it open). It no longer
+refreshes — use the flyout's refresh button or **Refresh now** in the menu.
+
 The app gets this data the same way the official `claude` CLI does: by signing you in
 with the same public OAuth client Claude Code uses, then calling the same
 `/api/oauth/usage` endpoint. No API key, no scraping, no reading another app's stored
@@ -187,8 +218,8 @@ click the "show hidden icons" `^` arrow the first time).
    your Windows UI language and remembers your choice.
 
 The app polls for updated usage every 5 minutes while it's running (plus whenever you
-double-click the icon or hit **Refresh now**), and refreshes its access token
-automatically in the background.
+hit the refresh button in the [flyout](#tray-flyout) or **Refresh now** in the menu), and
+refreshes its access token automatically in the background.
 
 **Automatically check for new version** (on by default) periodically checks GitHub
 Releases for a newer version. When one is found, you'll get a one-time balloon
