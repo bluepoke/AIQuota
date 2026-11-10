@@ -22,6 +22,37 @@ Every style uses the same colours as the tray icon (green ≤ 50%, yellow
 50–80%, red > 80%) and refreshes AIQuota when pressed. Keys placed before
 styles existed keep showing the combined view.
 
+## Flashing at a threshold
+
+A key flashes while the value it shows is at or above a percentage you set:
+
+| Style | Flashes based on |
+|---|---|
+| **Combined** | the higher of session and week |
+| **5h session** | the session usage |
+| **Week** | the weekly usage |
+| **Credit** | the credit usage (never, if your plan reports no credits) |
+
+- **Settings**: in the key's settings panel, **Flash when usage reaches
+  threshold** (on by default) and **Flash threshold (%)** (1–100, default 90 -
+  the same as AIQuota's warning notification). The threshold field is disabled
+  while flashing is off. Changes apply right away. Keys placed before this
+  version get the defaults.
+- **How it flashes**: the key alternates every 500 ms between its normal image
+  and a copy dimmed to 40% - one flash per second, below the WCAG limit of 3
+  per second. It never switches to a brighter frame, and with AIQuota's
+  accessibility mode on the dimmed frame stays greyscale.
+- **When it stops**: as soon as the value drops below the threshold (e.g.
+  after a reset), and while AIQuota isn't reachable or you're not logged in.
+- **Stop it by holding the key**: hold a flashing key for at least 0.6 seconds.
+  It stops flashing and shows its normal image, without refreshing. It stays
+  quiet until its value has dropped below the threshold, and flashes again the
+  next time the value reaches it. Holding one key doesn't affect other keys.
+  This is kept in memory only: after the host app or the plugin restarts, a key
+  that is still at or above its threshold flashes again.
+- **Short press**: still refreshes, as before. Holding a key that isn't
+  flashing does nothing.
+
 ## How it works
 
 ```mermaid
@@ -45,13 +76,18 @@ flowchart LR
   own embedded runtime - there's no separate executable or build step. The
   plugin's JS (`plugin/index.js`) polls `/status` every 4 seconds for each
   visible key, with that key's style, and pushes the image it gets back onto
-  the key via `setImage`, and calls `/refresh` on `keyDown`, using the bundled
-  `axios` HTTP client (`plugin/utils/axios.js`, vendored from the SDK's own
-  template).
-- The **Display** dropdown is the action's property inspector
+  the key via `setImage`, and calls `/refresh` on a short press (decided on
+  `keyUp`, measured from `keyDown`), using the bundled `axios` HTTP client
+  (`plugin/utils/axios.js`, vendored from the SDK's own template).
+- Flashing is done entirely in the plugin: it compares the percentages from
+  `/status` with the key's threshold, makes the dimmed frame by drawing the
+  PNG onto a canvas, and runs a 500 ms timer per flashing key next to the
+  4-second poll.
+- The settings panel is the action's property inspector
   (`propertyInspector/usage/`, set as `PropertyInspectorPath` in
-  `manifest.json`). It saves the choice as the key's `style` setting, which
-  the plugin receives via `willAppear`/`didReceiveSettings`.
+  `manifest.json`). It saves the choices as the key's `style`,
+  `flashEnabled` and `flashThreshold` settings, which the plugin receives via
+  `willAppear`/`didReceiveSettings`.
 - The two only talk to each other via `127.0.0.1` - no pairing, no vendor
   HID/USB protocol, no Companion/OpenDeck middleware.
 
@@ -71,8 +107,9 @@ controller"** (off by default, since it opens a local port).
    list - drag it onto a key.
 4. Optionally pick a **Display** style for the key in its settings panel (see
    [Display styles](#display-styles)); repeat with more keys for a separate
-   session/week/credit view. When updating from an older version, replace the
-   whole folder - the settings panel is new.
+   session/week/credit view, and adjust [flashing](#flashing-at-a-threshold)
+   if you like. When updating from an older version, replace the whole folder
+   and restart the host app.
 
 ## Known caveats
 
@@ -84,9 +121,10 @@ controller"** (off by default, since it opens a local port).
 - The bridge's port (51477) is fixed and shared between
   `StreamDockBridge.cs` and `plugin/index.js` - if you change one, change
   the other.
-- The display style dropdown (property inspector) is also only built against
-  the SDK template, not tested on a physical device. If the settings panel
-  stays empty, check the host app's debug console as above.
+- The settings panel (property inspector), flashing and the long press are
+  also only built against the SDK template, not tested on a physical device.
+  If the settings panel stays empty, check the host app's debug console as
+  above.
 - `plugin/utils/common.js`, `plugin/utils/worker.js`,
   `plugin/utils/axios.js`, `propertyInspector/utils/common.js`,
   `propertyInspector/utils/action.js` and everything in `static/css/` are

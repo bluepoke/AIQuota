@@ -1,6 +1,6 @@
 {
   "Name": "AIQuota",
-  "Version": "1.1.0",
+  "Version": "1.2.0",
   "Author": "Peter Kossek",
   "Description": "Shows Claude Code session/weekly/credit usage from AIQuota and refreshes it on click.",
   "Icon": "static/icon.png",
@@ -16,7 +16,7 @@
     {
       "UUID": "eu.schicht8.aiquota.usage",
       "Name": "AIQuota",
-      "Tooltip": "Claude Code session/weekly/credit usage - click to refresh",
+      "Tooltip": "Claude Code session/weekly/credit usage - press to refresh, hold to stop flashing",
       "Icon": "static/icon.png",
       "PropertyInspectorPath": "propertyInspector/usage/index.html",
       "state": 0,

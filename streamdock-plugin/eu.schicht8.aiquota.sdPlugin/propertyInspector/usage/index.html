@@ -5,6 +5,9 @@
     <meta charset="utf-8" />
     <title>AIQuota - property inspector</title>
     <link rel="stylesheet" href="../../static/css/sdpi.css">
+    <style>
+        #flashThreshold:disabled { opacity: 0.5; }
+    </style>
 </head>
 
 <body>
@@ -17,6 +20,17 @@
                 <option value="week">Week</option>
                 <option value="credit">Credit</option>
             </select>
+        </div>
+        <div class="sdpi-item" type="checkbox">
+            <div class="sdpi-item-label">Flash</div>
+            <div class="sdpi-item-value">
+                <input id="flashEnabled" type="checkbox" checked>
+                <label for="flashEnabled"><span></span>Flash when usage reaches threshold</label>
+            </div>
+        </div>
+        <div class="sdpi-item">
+            <div class="sdpi-item-label">Flash threshold (%)</div>
+            <input class="sdpi-item-value" id="flashThreshold" type="number" min="1" max="100" step="1" value="90">
         </div>
     </div>
     <script src="../utils/common.js"></script>

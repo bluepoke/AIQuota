@@ -291,7 +291,8 @@ hardware/software family under different brands) can mirror the same usage bars 
 countdown ring (including the dimmed look before a session starts), and trigger a
 refresh on press. Each key can instead show a single value - the 5-hour session (with
 an hour-by-hour countdown underneath), the week, or the usage credits - as one large
-bar, so you can spread them over several keys. This needs a small companion plugin
+bar, so you can spread them over several keys. A key can also flash once its value
+reaches a threshold you set (90% by default); hold the key to stop it. This needs a small companion plugin
 installed in the controller's host app - see [`streamdock-plugin/README.md`](streamdock-plugin/README.md)
 for how it works and how to install it.
 
