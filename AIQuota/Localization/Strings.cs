@@ -302,12 +302,49 @@ public static class Strings
         return $" ({until} {weekday} {localTime:HH:mm}, {countdown})";
     }
 
-    public static string BalloonSessionWarning(int percent) => T($"Sitzungslimit (5h) bei {percent}%.", $"Session limit (5h) at {percent}%.");
-    public static string BalloonWeeklyWarning(int percent) => T($"Wochenlimit bei {percent}%.", $"Weekly limit at {percent}%.");
-    public static string BalloonSessionForecast(TimeSpan timeToLimit) => T(
-        $"Beim aktuellen Verbrauch ist das Sitzungslimit (5h) in ~{FormatDuration(timeToLimit)} erreicht.",
-        $"At the current rate, you'll hit the session limit (5h) in ~{FormatDuration(timeToLimit)}.");
-    public static string BalloonNewVersionAvailable(string version) => T(
-        $"Eine neue Version (v{version}) ist verfügbar. Klicke hier, um die Release-Seite zu öffnen.",
-        $"A new version (v{version}) is available. Click here to open the release page.");
+    // Notifications (toasts, or balloon tips as the fallback).
+
+    /// <summary>"Session usage (5h) at 92% · resets 14:30".</summary>
+    public static string NotificationSessionWarning(int percent, DateTimeOffset? resetsAt) =>
+        T($"Sitzungsnutzung (5h) bei {percent}%", $"Session usage (5h) at {percent}%") + NotificationResetSuffix(resetsAt);
+
+    /// <summary>"Weekly usage at 90% · resets Mon 09:00".</summary>
+    public static string NotificationWeeklyWarning(int percent, DateTimeOffset? resetsAt) =>
+        T($"Wochennutzung bei {percent}%", $"Weekly usage at {percent}%") + NotificationResetSuffix(resetsAt);
+
+    public static string NotificationSessionForecast(TimeSpan timeToLimit) => T(
+        $"Sitzungslimit (5h) in ~{FormatDuration(timeToLimit)} beim aktuellen Verbrauch",
+        $"Session limit (5h) in ~{FormatDuration(timeToLimit)} at current rate");
+
+    public static string NotificationNewVersion(string version) => T(
+        $"AI Quota v{version} ist verfügbar",
+        $"AI Quota v{version} is available");
+
+    /// <summary>Balloon tips have no buttons, so the text says what a click does.</summary>
+    public static string NotificationNewVersionBalloon(string version) => T(
+        $"AI Quota v{version} ist verfügbar. Klicke hier, um es zu installieren.",
+        $"AI Quota v{version} is available. Click here to install it.");
+
+    /// <summary>" · resets 14:30" for today, " · resets Mon 09:00" otherwise.</summary>
+    private static string NotificationResetSuffix(DateTimeOffset? resetsAt)
+    {
+        if (resetsAt is not { } reset)
+            return "";
+        var local = reset.ToLocalTime();
+        var when = local.Date == DateTime.Now.Date ? $"{local:HH:mm}" : $"{WeekdayShort(local)} {local:HH:mm}";
+        return T($" · Reset {when}", $" · resets {when}");
+    }
+
+    public static string ToastNewVersionTitle => T("Update verfügbar", "Update available");
+    public static string ToastOpenUsagePage => T("Nutzungsseite öffnen", "Open usage page");
+    public static string ToastDismiss => T("Schließen", "Dismiss");
+    public static string ToastInstall => T("Installieren…", "Install…");
+    public static string ToastLater => T("Später", "Later");
+
+    public static string MenuRemoveNotificationRegistration => T(
+        "Benachrichtigungs-Registrierung entfernen und beenden…",
+        "Remove notification registration and exit…");
+    public static string ConfirmRemoveNotificationRegistration => T(
+        "Entfernt die Registrierung, die AI Quota für Windows-Benachrichtigungen angelegt hat (Registry-Einträge unter HKCU\\Software\\Classes und eine Kopie des Symbols), und löscht seine Benachrichtigungen aus dem Benachrichtigungscenter.\n\nAI Quota wird danach beendet. Gedacht für vor dem Löschen der App - beim nächsten Start wird die Registrierung wieder angelegt.\n\nFortfahren?",
+        "Removes the registration AI Quota created for Windows notifications (registry entries under HKCU\\Software\\Classes and a copy of its icon) and clears its notifications from the notification center.\n\nAI Quota then exits. Meant for before deleting the app - the next start creates the registration again.\n\nContinue?");
 }

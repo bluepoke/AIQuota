@@ -1,6 +1,7 @@
 using AIQuota.Auth;
 using AIQuota.History;
 using AIQuota.Localization;
+using AIQuota.Notifications;
 using AIQuota.StreamDock;
 
 namespace AIQuota;
@@ -8,6 +9,9 @@ namespace AIQuota;
 public sealed class UsageTrayContext : ApplicationContext
 {
     private enum IconKind { Unavailable, Warning, Usage, Refreshing }
+
+    /// <summary>Where "Open usage page" on a usage notification leads.</summary>
+    private const string UsagePageUrl = "https://claude.ai/settings/usage";
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NewVersionCheckInterval = TimeSpan.FromHours(6);
@@ -44,6 +48,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _accessibilityModeItem;
     private readonly ToolStripMenuItem _streamDockItem;
     private readonly ToolStripMenuItem _checkForNewVersionItem;
+    private readonly ToolStripMenuItem _removeNotificationRegistrationItem;
     private readonly ToolStripMenuItem _newVersionAvailableItem;
     private readonly ToolStripMenuItem _refreshItem;
     private readonly ToolStripMenuItem _exitItem;
@@ -86,6 +91,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private UsageSnapshot? _lastUsageSnapshot;
     private NewVersionInfo? _availableUpdate;
     private IconKind _currentIconKind = IconKind.Unavailable;
+    private readonly INotifier _notifier;
     private string[] _tooltipCandidates = [""];
 
     /// <summary>The saved accessibility-mode choice; the mode is also on while Windows High
@@ -107,7 +113,12 @@ public sealed class UsageTrayContext : ApplicationContext
 
     public UsageTrayContext()
     {
-        _uiContext = SynchronizationContext.Current ?? new SynchronizationContext();
+        // WinForms only installs its context when the first control is created, which hasn't
+        // happened yet here - a plain SynchronizationContext would run posted work (Stream
+        // Dock refreshes, toast clicks) on the thread pool instead of the UI thread.
+        if (SynchronizationContext.Current is not WindowsFormsSynchronizationContext)
+            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+        _uiContext = SynchronizationContext.Current!;
         _usageApi = new UsageApiClient(_oauth);
 
         _userItem = new ToolStripMenuItem { Enabled = false, Visible = false };
@@ -133,6 +144,10 @@ public sealed class UsageTrayContext : ApplicationContext
         _streamDockItem.Click += OnToggleStreamDock;
         _checkForNewVersionItem = new ToolStripMenuItem { CheckOnClick = false, Checked = NewVersionPreference.IsEnabled() };
         _checkForNewVersionItem.Click += OnToggleNewVersionCheck;
+        // Only the zip build registers itself for notifications; the MSIX package's
+        // registration goes away with the package.
+        _removeNotificationRegistrationItem = new ToolStripMenuItem { Visible = !ToastNotifier.IsPackaged };
+        _removeNotificationRegistrationItem.Click += OnRemoveNotificationRegistrationClicked;
         _newVersionAvailableItem = new ToolStripMenuItem { Visible = false };
         _newVersionAvailableItem.Click += (_, _) => OnNewVersionClicked();
         _refreshItem = new ToolStripMenuItem();
@@ -159,6 +174,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _settingsMenu.DropDownItems.Add(_streamDockItem);
         _settingsMenu.DropDownItems.Add(_checkForNewVersionItem);
         _settingsMenu.DropDownItems.Add(_languageMenu);
+        _settingsMenu.DropDownItems.Add(_removeNotificationRegistrationItem);
 
         _aboutMenu = new ToolStripMenuItem();
         _aboutMenu.DropDownItems.Add(_githubItem);
@@ -201,7 +217,7 @@ public sealed class UsageTrayContext : ApplicationContext
         // button and "Refresh now" do that): the flyout must open on the first click without
         // waiting to see whether a second one follows, and keeps open on the second.
         _notifyIcon.MouseClick += OnNotifyIconMouseClick;
-        _notifyIcon.BalloonTipClicked += (_, _) => OnNewVersionClicked();
+        _notifier = ToastNotifier.Create(_notifyIcon, OnNotificationAction, _uiContext);
 
         _timer = new System.Windows.Forms.Timer { Interval = (int)PollInterval.TotalMilliseconds };
         _timer.Tick += async (_, _) => await RefreshAsync();
@@ -242,6 +258,7 @@ public sealed class UsageTrayContext : ApplicationContext
         ApplyAccessibilityMenuState();
         _streamDockItem.Text = Strings.MenuEnableStreamDock;
         _checkForNewVersionItem.Text = Strings.MenuCheckForNewVersion;
+        _removeNotificationRegistrationItem.Text = Strings.MenuRemoveNotificationRegistration;
         if (_availableUpdate is not null)
             _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(_availableUpdate.Version);
         _refreshItem.Text = Strings.MenuRefresh;
@@ -384,6 +401,48 @@ public sealed class UsageTrayContext : ApplicationContext
         _flyout.Toggle(Cursor.Position);
     }
 
+    /// <summary>A button or the body of a notification was clicked (see <see
+    /// cref="INotifier"/>). Only the new-version notification's "Install…" leads to the
+    /// update flow - and only if an update is still pending, e.g. not after the app was
+    /// restarted by a click on an old notification.</summary>
+    private void OnNotificationAction(NotificationAction action)
+    {
+        switch (action)
+        {
+            case NotificationAction.OpenUsagePage:
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(UsagePageUrl) { UseShellExecute = true });
+                break;
+            case NotificationAction.Install:
+                OnNewVersionClicked();
+                break;
+            default:
+                _flyout ??= new UsageFlyout(BuildFlyoutState, RefreshAsync);
+                _flyout.Open(Cursor.Position);
+                break;
+        }
+    }
+
+    /// <summary>Zip build only: removes the notification registration (see <see
+    /// cref="ToastNotifier.RemoveRegistration"/>) and exits, as a clean-up before deleting
+    /// the app.</summary>
+    private void OnRemoveNotificationRegistrationClicked(object? sender, EventArgs e)
+    {
+        var answer = MessageBox.Show(Strings.ConfirmRemoveNotificationRegistration, Strings.AppTitle,
+            MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes)
+            return;
+
+        try
+        {
+            ToastNotifier.RemoveRegistration();
+        }
+        catch (Exception)
+        {
+            // Nothing was registered (toasts were unavailable), or it's already gone.
+        }
+        ExitThread();
+    }
+
     /// <summary>Re-reads the flyout's state if it has been created - it only repaints while
     /// it's open.</summary>
     private void UpdateFlyout() => _flyout?.UpdateState();
@@ -515,7 +574,7 @@ public sealed class UsageTrayContext : ApplicationContext
             ApplyTooltipText();
 
             if (isNewlyDetected)
-                _notifyIcon.ShowBalloonTip(8000, Strings.AppTitle, Strings.BalloonNewVersionAvailable(newVersion.Version), ToolTipIcon.Info);
+                _notifier.ShowNewVersion(newVersion.Version);
         }
         finally
         {
@@ -861,7 +920,8 @@ public sealed class UsageTrayContext : ApplicationContext
     {
         if (snapshot.SessionPercent >= WarnThresholdPercent && !_sessionWarningShown)
         {
-            _notifyIcon.ShowBalloonTip(8000, Strings.AppTitle, Strings.BalloonSessionWarning(snapshot.SessionPercent), ToolTipIcon.Warning);
+            _notifier.ShowUsageAlert(UsageAlert.Session,
+                Strings.NotificationSessionWarning(snapshot.SessionPercent, snapshot.SessionResetsAt), snapshot.SessionResetsAt);
             _sessionWarningShown = true;
         }
         else if (snapshot.SessionPercent < WarnThresholdPercent)
@@ -871,7 +931,8 @@ public sealed class UsageTrayContext : ApplicationContext
 
         if (snapshot.WeeklyPercent >= WarnThresholdPercent && !_weeklyWarningShown)
         {
-            _notifyIcon.ShowBalloonTip(8000, Strings.AppTitle, Strings.BalloonWeeklyWarning(snapshot.WeeklyPercent), ToolTipIcon.Warning);
+            _notifier.ShowUsageAlert(UsageAlert.Weekly,
+                Strings.NotificationWeeklyWarning(snapshot.WeeklyPercent, snapshot.WeeklyResetsAt), snapshot.WeeklyResetsAt);
             _weeklyWarningShown = true;
         }
         else if (snapshot.WeeklyPercent < WarnThresholdPercent)
@@ -883,7 +944,8 @@ public sealed class UsageTrayContext : ApplicationContext
         {
             if (!_sessionForecastWarningShown)
             {
-                _notifyIcon.ShowBalloonTip(8000, Strings.AppTitle, Strings.BalloonSessionForecast(limitIn), ToolTipIcon.Warning);
+                _notifier.ShowUsageAlert(UsageAlert.SessionForecast,
+                    Strings.NotificationSessionForecast(limitIn), snapshot.SessionResetsAt);
                 _sessionForecastWarningShown = true;
             }
         }
@@ -893,6 +955,7 @@ public sealed class UsageTrayContext : ApplicationContext
             _sessionForecastWarningShown = false;
         }
     }
+
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];

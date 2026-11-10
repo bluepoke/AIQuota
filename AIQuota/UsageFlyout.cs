@@ -115,6 +115,14 @@ internal sealed class UsageFlyout : Form
         ApplyLayout();
     }
 
+    /// <summary>Click on a usage notification: opens the flyout at <paramref name="cursor"/>,
+    /// or leaves it open if it already is.</summary>
+    public void Open(Point cursor)
+    {
+        if (!Visible)
+            ShowAt(cursor);
+    }
+
     /// <summary>Left-click on the tray icon: opens the flyout at <paramref name="cursor"/>,
     /// or closes it if it's open.</summary>
     public void Toggle(Point cursor)

@@ -30,6 +30,12 @@ static class Program
 
         if (!acquired)
         {
+            // Windows started this process for a click on a toast, but an instance is already
+            // running - the click is delivered to that one (via the toast COM activator), so
+            // just leave quietly instead of reporting "already running".
+            if (args.Contains(Notifications.ToastNotifier.ActivationArgument))
+                return;
+
             MessageBox.Show(
                 Strings.InstanceAlreadyRunning,
                 Strings.AppTitle,

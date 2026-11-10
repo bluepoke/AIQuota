@@ -13,7 +13,9 @@
   xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap mp rescap">
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  IgnorableNamespaces="uap mp rescap desktop com">
 
   <Identity
     Name="PeterKossek.ClaudeUsageTray"
@@ -49,6 +51,22 @@
           Square310x310Logo="Assets\Square310x310Logo.png" />
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
+      <!-- Toast notification buttons (Notifications/ToastNotifier.cs): Windows activates the
+           COM class below to deliver a click, starting AIQuota.exe with -ToastActivated if
+           it isn't running. The toolkit reads the CLSID from here; it must stay the same in
+           both entries, and the Arguments must be exactly "-ToastActivated". -->
+      <Extensions>
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="300D5267-4DF6-4E15-A530-3E99A6C97181" />
+        </desktop:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="AIQuota.exe" Arguments="-ToastActivated" DisplayName="AI Quota toast activator">
+              <com:Class Id="300D5267-4DF6-4E15-A530-3E99A6C97181" DisplayName="AI Quota toast activator" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
     </Application>
   </Applications>
 

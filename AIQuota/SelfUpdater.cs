@@ -15,10 +15,6 @@ namespace AIQuota;
 /// </summary>
 public static class SelfUpdater
 {
-    // The self-contained zip bundles the whole .NET runtime (tens of MB); the
-    // framework-dependent one is just the app itself (well under a MB). A safe
-    // threshold to tell which one is currently installed from its own file size.
-    private const long SelfContainedSizeThresholdBytes = 5 * 1024 * 1024;
 
     /// <summary>
     /// Downloads and extracts the update, then launches a helper script that will replace
@@ -30,7 +26,7 @@ public static class SelfUpdater
         var currentExePath = Environment.ProcessPath
             ?? throw new InvalidOperationException("Could not determine the running executable's path.");
 
-        var downloadUrl = ChooseAssetUrl(update, currentExePath);
+        var downloadUrl = ChooseAssetUrl(update);
 
         var stagingDir = Path.Combine(Path.GetTempPath(), "AIQuota-update-" + Guid.NewGuid());
         Directory.CreateDirectory(stagingDir);
@@ -117,26 +113,29 @@ public static class SelfUpdater
         }
     }
 
-    private static string ChooseAssetUrl(NewVersionInfo update, string currentExePath)
+    private static string ChooseAssetUrl(NewVersionInfo update)
     {
-        var isSelfContained = TryGetFileSize(currentExePath) is not { } size || size > SelfContainedSizeThresholdBytes;
-        var preferred = isSelfContained ? update.SelfContainedAssetUrl : update.FrameworkDependentAssetUrl;
+        var preferred = IsSelfContained() ? update.SelfContainedAssetUrl : update.FrameworkDependentAssetUrl;
         return preferred
             ?? update.SelfContainedAssetUrl
             ?? update.FrameworkDependentAssetUrl
             ?? throw new InvalidOperationException("This release has no downloadable zip asset.");
     }
 
-    private static long? TryGetFileSize(string path)
+    /// <summary>Whether the running build bundles the .NET runtime (self-contained) or uses
+    /// the shared one installed on the machine (framework-dependent), so the update keeps the
+    /// same variant. The exe's size no longer tells them apart reliably - the Windows SDK
+    /// projection makes even the framework-dependent single-file exe ~25 MB. Instead: in a
+    /// self-contained single-file app the core library is bundled (no file path, or one in
+    /// the app's own folder); in a framework-dependent one it's loaded from the shared
+    /// runtime's folder (e.g. C:\Program Files\dotnet\shared\Microsoft.NETCore.App\9.0.x).</summary>
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("SingleFile", "IL3000",
+        Justification = "Intended: an empty location means the core library is bundled into the single-file exe, i.e. self-contained.")]
+    private static bool IsSelfContained()
     {
-        try
-        {
-            return new FileInfo(path).Length;
-        }
-        catch (IOException)
-        {
-            return null;
-        }
+        var coreLibPath = typeof(object).Assembly.Location;
+        return string.IsNullOrEmpty(coreLibPath)
+            || coreLibPath.StartsWith(AppContext.BaseDirectory, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Passing the running process's own PID lets the script wait for the exact

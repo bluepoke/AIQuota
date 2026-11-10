@@ -83,9 +83,41 @@ with the same public OAuth client Claude Code uses, then calling the same
 credentials — you log in once via your browser, and the token is encrypted on disk for
 your Windows user account only.
 
-If your usage crosses 90% for either window, you'll get a one-time balloon
-notification. You'll also get one when, at your current rate, the session is on track to
-hit its limit within 30 minutes (see [Usage history and forecast](#usage-history-and-forecast)).
+If your usage crosses 90% for either window, you'll get a one-time
+[notification](#notifications). You'll also get one when, at your current rate, the session
+is on track to hit its limit within 30 minutes (see [Usage history and forecast](#usage-history-and-forecast)).
+
+### Notifications
+
+Usage warnings and the new-version notice are Windows notifications with buttons:
+
+| Notification | Example | Buttons |
+|---|---|---|
+| Session at 90% or more | `Session usage (5h) at 92% · resets 14:30` | **Open usage page**, **Dismiss** |
+| Week at 90% or more | `Weekly usage at 90% · resets Mon 09:00` | **Open usage page**, **Dismiss** |
+| Session limit forecast | `Session limit (5h) in ~25min at current rate` | **Open usage page**, **Dismiss** |
+| New version | `AI Quota v1.5.0 is available` | **Install…**, **Later** |
+
+- **Open usage page** opens [claude.ai/settings/usage](https://claude.ai/settings/usage) in
+  your browser. **Install…** opens the same update confirmation as the menu entry.
+- Clicking a usage notification itself (not a button) opens the [flyout](#tray-flyout).
+- Each kind replaces its previous notification in the notification center instead of
+  stacking up, and usage warnings disappear from there once their window resets.
+- Windows' notification settings apply: AI Quota is listed under **Settings → System →
+  Notifications**, where you can turn it off, and with Do Not Disturb on, notifications
+  go silently to the notification center.
+- If Windows notifications can't be set up, the app falls back to classic tray balloon
+  tips. Clicking one does the same as the notification itself; clicking the new-version
+  one opens the update confirmation.
+
+For the notification buttons to work, the zip version registers itself with Windows on
+its first start (the MSIX/Store version brings this with the package and removes it on
+uninstall). That's a few registry entries under `HKCU\Software\Classes` (`AppUserModelId\…`,
+`CLSID\{…}`, `AppID\{…}`) and a copy of the app icon under
+`%LOCALAPPDATA%\ToastNotificationManagerCompat\Apps\`. Before deleting the zip version, use
+**Settings → Remove notification registration and exit…** to remove them. Otherwise they
+stay behind; they're harmless, but Windows keeps listing AI Quota in its notification
+settings. The next start registers again.
 
 ### Session countdown ring
 
@@ -276,9 +308,10 @@ hit the refresh button in the [flyout](#tray-flyout) or **Refresh now** in the m
 refreshes its access token automatically in the background.
 
 **Automatically check for new version** (on by default) periodically checks GitHub
-Releases for a newer version. When one is found, you'll get a one-time balloon
-notification and a new menu entry (e.g. `New version available: v1.2.0`). Click either
-one and confirm the prompt to download, install, and restart with the new version —
+Releases for a newer version. When one is found, you'll get a one-time
+[notification](#notifications) and a new menu entry (e.g. `New version available: v1.2.0`).
+Click **Install…** in the notification or the menu entry, and confirm the prompt to
+download, install, and restart with the new version —
 nothing happens without that confirmation. It picks the same self-contained/framework-
 dependent variant you're already running, matching Defender's usual "unknown publisher"
 warning for the manual zip route.
