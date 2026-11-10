@@ -454,7 +454,8 @@ internal sealed class UsageFlyout : Form
             : null;
         y = DrawTitleRow(g, Strings.FlyoutSessionTitle, $"{snapshot.SessionPercent}%", left, y, width);
         DrawBar(g, new RectangleF(left, y, width, S(8f)), snapshot.SessionPercent, _state.SessionNotStarted,
-            paceFraction: _state.ShowPaceMarker ? sessionPace : null);
+            paceFraction: _state.ShowPaceMarker ? sessionPace : null,
+            projectedPercent: _state.SessionForecast.ProjectedPercent);
         y += S(8f) + S(6f);
         var sessionDetail = _state.SessionNotStarted || snapshot.SessionResetsAt is not { } sessionReset
             ? Strings.FlyoutSessionNotStarted
@@ -469,7 +470,8 @@ internal sealed class UsageFlyout : Form
         double? pace = snapshot.WeeklyResetsAt is { } weekReset ? UsageWindows.WeeklyPaceFraction(weekReset, now) : null;
         y = DrawTitleRow(g, Strings.FlyoutWeekTitle, $"{snapshot.WeeklyPercent}%", left, y, width);
         DrawBar(g, new RectangleF(left, y, width, S(8f)), snapshot.WeeklyPercent, outlineOnly: false,
-            paceFraction: _state.ShowPaceMarker ? pace : null);
+            paceFraction: _state.ShowPaceMarker ? pace : null,
+            projectedPercent: _state.WeeklyForecast.ProjectedPercent);
         y += S(8f) + S(6f);
         if (snapshot.WeeklyResetsAt is { } weeklyReset)
         {
@@ -527,8 +529,10 @@ internal sealed class UsageFlyout : Form
     /// <summary>A large usage bar: the same track/fill/colour rules as the tray icon's (an
     /// outline-only track before a session starts; in the greyscale palette an outlined track
     /// and a notch above 80%), plus - for the session and the week - the pace marker as a
-    /// tick that sticks out a little above and below the bar.</summary>
-    private void DrawBar(Graphics? g, RectangleF rect, int percent, bool outlineOnly, double? paceFraction)
+    /// tick that sticks out a little above and below the bar, and the forecast's <paramref
+    /// name="projectedPercent"/> as a dimmed, hatched extension of the fill (see <see
+    /// cref="DrawProjection"/>).</summary>
+    private void DrawBar(Graphics? g, RectangleF rect, int percent, bool outlineOnly, double? paceFraction, double? projectedPercent = null)
     {
         if (g is null)
             return;
@@ -558,6 +562,9 @@ internal sealed class UsageFlyout : Form
             }
         }
 
+        if (projectedPercent is { } projected && projected > clamped)
+            DrawProjection(g, rect, radius, projected);
+
         if (clamped > 0)
         {
             var fillWidth = Math.Max(rect.Width * clamped / 100f, rect.Height);
@@ -577,6 +584,8 @@ internal sealed class UsageFlyout : Form
             }
         }
 
+        DrawScaleTicks(g, rect, outlineOnly);
+
         if (paceFraction is { } pace)
         {
             var x = rect.X + rect.Width * (float)Math.Clamp(pace, 0.0, 1.0);
@@ -589,6 +598,54 @@ internal sealed class UsageFlyout : Form
             g.FillRectangle(outlineBrush, x - core / 2f - outline, top - outline, core + 2 * outline, height + 2 * outline);
             g.FillRectangle(coreBrush, x - core / 2f, top, core, height);
         }
+    }
+
+    /// <summary>Scale ticks at 25%, 50% and 75%: thin, pixel-aligned gaps across the bar in
+    /// the flyout's background colour, so they read the same over the fill, the projection
+    /// and the empty track. Thinner and fainter than the pace marker and the greyscale
+    /// palette's notch, which they mustn't be confused with. On an outline-only bar (session
+    /// not started) there's nothing to cut a gap into, so they're drawn in the outline's
+    /// colour instead.</summary>
+    private void DrawScaleTicks(Graphics g, RectangleF rect, bool outlineOnly)
+    {
+        var color = outlineOnly
+            ? (_usage.TrackOutline is null ? _palette.Track : _usage.NotStarted)
+            : Color.FromArgb(190, _palette.Background);
+        var width = Math.Max(1f, MathF.Round(S(1f)));
+
+        using var brush = new SolidBrush(color);
+        foreach (var fraction in new[] { 0.25f, 0.5f, 0.75f })
+        {
+            var x = MathF.Round(rect.X + rect.Width * fraction - width / 2f);
+            g.FillRectangle(brush, x, rect.Y, width, rect.Height);
+        }
+    }
+
+    /// <summary>The usage the window would reach by its reset at the current rate: drawn from
+    /// the bar's start (the real fill covers the first part) to <paramref name="projected"/>,
+    /// in the colour of the level it would reach - dimmed, with diagonal stripes, so it reads
+    /// as "not yet used" and stays apart from the fill in the greyscale palette too.</summary>
+    private void DrawProjection(Graphics g, RectangleF rect, float radius, double projected)
+    {
+        var level = Math.Clamp(projected, 0, 100);
+        var width = Math.Min(Math.Max(rect.Width * (float)(level / 100), rect.Height), rect.Width);
+        var projectionRect = new RectangleF(rect.X, rect.Y, width, rect.Height);
+        var color = _usage.ForPercent((int)Math.Ceiling(level));
+
+        using var path = RoundedRect(projectionRect, radius);
+        var previousClip = g.Clip;
+        g.SetClip(path, CombineMode.Intersect);
+
+        using (var dim = new SolidBrush(Color.FromArgb(70, color)))
+            g.FillPath(dim, path);
+
+        // Wide spacing, so the stripes stand out clearly from the solid fill next to them.
+        var spacing = S(9f);
+        using var stripe = new Pen(Color.FromArgb(170, color), S(1.5f));
+        for (var x = projectionRect.X - rect.Height; x < projectionRect.Right; x += spacing)
+            g.DrawLine(stripe, x, rect.Bottom, x + rect.Height, rect.Y);
+
+        g.Clip = previousClip;
     }
 
     private void DrawLegend(Graphics? g, UsageSnapshot snapshot, float right, float centerY)

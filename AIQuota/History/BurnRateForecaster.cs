@@ -15,7 +15,10 @@ public enum ForecastKind
     Limit,
 }
 
-public readonly record struct UsageForecast(ForecastKind Kind, TimeSpan TimeToLimit = default)
+/// <param name="ProjectedPercent">Usage the window would reach by its reset at the current
+/// rate, capped at 100 - shown as the hatched extension of the flyout's bars. Null when
+/// <see cref="Kind"/> is <see cref="ForecastKind.None"/>.</param>
+public readonly record struct UsageForecast(ForecastKind Kind, TimeSpan TimeToLimit = default, double? ProjectedPercent = null)
 {
     public static UsageForecast None => new(ForecastKind.None);
 
@@ -101,11 +104,15 @@ public static class BurnRateForecaster
         // Compare in minutes before building a TimeSpan: a near-flat fit can yield a tiny positive
         // slope (e.g. 1e-15 from rounding), whose minutes-to-limit overflow TimeSpan.
         var minutesToLimit = (100 - latest.Percent) / ratePerMinute;
-        if (minutesToLimit >= (resetsAt - latest.Time).TotalMinutes)
-            return new UsageForecast(ForecastKind.ResetFirst);
+        var minutesToReset = (resetsAt - latest.Time).TotalMinutes;
+        if (minutesToLimit >= minutesToReset)
+        {
+            var projected = Math.Min(latest.Percent + ratePerMinute * minutesToReset, 100);
+            return new UsageForecast(ForecastKind.ResetFirst, ProjectedPercent: projected);
+        }
 
         var timeToLimit = latest.Time + TimeSpan.FromMinutes(minutesToLimit) - now;
-        return new UsageForecast(ForecastKind.Limit, timeToLimit < TimeSpan.FromMinutes(1) ? TimeSpan.FromMinutes(1) : timeToLimit);
+        return new UsageForecast(ForecastKind.Limit, timeToLimit < TimeSpan.FromMinutes(1) ? TimeSpan.FromMinutes(1) : timeToLimit, ProjectedPercent: 100);
     }
 
     /// <summary>Least-squares slope of percent over time, in percentage points per minute.
