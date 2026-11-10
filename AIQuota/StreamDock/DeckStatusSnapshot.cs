@@ -11,6 +11,8 @@ namespace AIQuota.StreamDock;
 /// <param name="WeeklyPaceFraction">Elapsed fraction of the current 7-day window, where the
 /// weekly pace marker is drawn on the Combined and Week keys; null when the marker is turned
 /// off or there's no weekly reset time.</param>
+/// <param name="Greyscale">Accessibility mode is on: the keys use the high-contrast
+/// greyscale palette (see <see cref="UsagePalette.Greyscale"/>).</param>
 public sealed record DeckStatusSnapshot(
     bool LoggedIn,
     bool IsWarning,
@@ -21,4 +23,5 @@ public sealed record DeckStatusSnapshot(
     double? SessionRemainingFraction,
     bool SessionNotStarted,
     bool ShowSessionRing,
-    double? WeeklyPaceFraction = null);
+    double? WeeklyPaceFraction = null,
+    bool Greyscale = false);

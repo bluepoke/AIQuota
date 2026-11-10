@@ -19,7 +19,8 @@ internal sealed record FlyoutState(
     bool ShowPaceMarker,
     UsageForecast SessionForecast,
     UsageForecast WeeklyForecast,
-    IReadOnlyList<UsageHistoryRecord> History);
+    IReadOnlyList<UsageHistoryRecord> History,
+    bool Greyscale = false);
 
 /// <summary>
 /// Small borderless panel shown next to the tray icon on left-click, like the Windows volume
@@ -59,6 +60,7 @@ internal sealed class UsageFlyout : Form
 
     private FlyoutState _state;
     private Palette _palette = Palette.For(SystemTheme.IsLightTaskbar());
+    private UsagePalette _usage = UsagePalette.Standard(SystemTheme.IsLightTaskbar());
     private float _scale = 1f;
     private float _fontScale;
     private Point _anchor;
@@ -138,7 +140,7 @@ internal sealed class UsageFlyout : Form
         _state = _getState();
         if (!Visible)
             return;
-        _palette = Palette.For(SystemTheme.IsLightTaskbar());
+        ApplyTheme();
         ApplyLayout();
         Location = ComputeLocation(_anchor, Size);
         Invalidate();
@@ -148,7 +150,7 @@ internal sealed class UsageFlyout : Form
     {
         _anchor = anchor;
         _state = _getState();
-        _palette = Palette.For(SystemTheme.IsLightTaskbar());
+        ApplyTheme();
         _scale = DpiAt(anchor) / 96f;
         _hoverIndex = null;
         ApplyLayout();
@@ -159,6 +161,15 @@ internal sealed class UsageFlyout : Form
         _refreshButton.Focus();
         _shownAt = Environment.TickCount64;
         _clockTimer.Start();
+    }
+
+    /// <summary>Picks the flyout and usage colours for the current Windows theme and the
+    /// accessibility mode.</summary>
+    private void ApplyTheme()
+    {
+        var light = SystemTheme.IsLightTaskbar();
+        _palette = Palette.For(light);
+        _usage = UsagePalette.For(_state.Greyscale, light);
     }
 
     private void HideFlyout()
@@ -377,6 +388,11 @@ internal sealed class UsageFlyout : Form
         var g = e.Graphics;
         g.Clear(_palette.Background);
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        // In accessibility mode, greyscale text smoothing instead of ClearType, whose coloured
+        // subpixel fringes would be the only hue left in the flyout. TextRenderer picks the
+        // GDI font quality from this hint.
+        if (_usage.IsGreyscale)
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
         DrawContent(g, DateTimeOffset.Now);
 
         if (Environment.OSVersion.Version.Build < 22000)
@@ -501,8 +517,9 @@ internal sealed class UsageFlyout : Form
     }
 
     /// <summary>A large usage bar: the same track/fill/colour rules as the tray icon's (an
-    /// outline-only track before a session starts), plus - for the session and the week - the
-    /// pace marker as a tick that sticks out a little above and below the bar.</summary>
+    /// outline-only track before a session starts; in the greyscale palette an outlined track
+    /// and a notch above 80%), plus - for the session and the week - the pace marker as a
+    /// tick that sticks out a little above and below the bar.</summary>
     private void DrawBar(Graphics? g, RectangleF rect, int percent, bool outlineOnly, double? paceFraction)
     {
         if (g is null)
@@ -512,24 +529,44 @@ internal sealed class UsageFlyout : Form
         var radius = rect.Height / 2f;
         using (var trackPath = RoundedRect(rect, radius))
         {
+            // The greyscale palette brings its own track (with an outline for contrast);
+            // the standard one uses the flyout's neutral grey.
+            var greyscaleTrack = _usage.TrackOutline;
             if (outlineOnly)
             {
-                using var outline = new Pen(_palette.Track, S(1.5f));
+                using var outline = new Pen(greyscaleTrack is null ? _palette.Track : _usage.NotStarted, S(1.5f));
                 g.DrawPath(outline, trackPath);
             }
             else
             {
-                using var track = new SolidBrush(_palette.Track);
+                using var track = new SolidBrush(greyscaleTrack is null ? _palette.Track : _usage.Track);
                 g.FillPath(track, trackPath);
+                if (greyscaleTrack is { } outlineColor)
+                {
+                    using var outline = new Pen(outlineColor, S(1f));
+                    using var insetPath = RoundedRect(RectangleF.Inflate(rect, -S(0.5f), -S(0.5f)), radius - S(0.5f));
+                    g.DrawPath(outline, insetPath);
+                }
             }
         }
 
         if (clamped > 0)
         {
             var fillWidth = Math.Max(rect.Width * clamped / 100f, rect.Height);
-            using var fillPath = RoundedRect(new RectangleF(rect.X, rect.Y, Math.Min(fillWidth, rect.Width), rect.Height), radius);
-            using var fill = new SolidBrush(UsagePalette.ColorForPercent(clamped));
+            var fillRect = new RectangleF(rect.X, rect.Y, Math.Min(fillWidth, rect.Width), rect.Height);
+            using var fillPath = RoundedRect(fillRect, radius);
+            using var fill = new SolidBrush(_usage.ForPercent(clamped));
             g.FillPath(fill, fillPath);
+
+            if (_usage.MarksHighLevel && UsagePalette.IsHigh(clamped))
+            {
+                // Same notch as the tray icon: a contrasting gap just inside the fill's end.
+                var previousClip = g.Clip;
+                g.SetClip(fillPath, CombineMode.Intersect);
+                using var notch = new SolidBrush(_usage.HighNotch);
+                g.FillRectangle(notch, fillRect.Right - S(4f) - S(2f), fillRect.Y, S(2f), fillRect.Height);
+                g.Clip = previousClip;
+            }
         }
 
         if (paceFraction is { } pace)
@@ -567,7 +604,7 @@ internal sealed class UsageFlyout : Form
         x -= S(12f) + usageWidth;
         DrawText(g, usageText, _smallFont, _palette.Secondary, new RectangleF(x, centerY - S(8f), usageWidth + S(2f), S(16f)), TextFormatFlags.NoPadding);
         x -= gap + sample;
-        using var usagePen = new Pen(UsagePalette.ColorForPercent(snapshot.WeeklyPercent), S(2f)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var usagePen = new Pen(_usage.ForPercent(snapshot.WeeklyPercent), S(2f)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
         g.DrawLine(usagePen, x, centerY, x + sample, centerY);
     }
 
@@ -670,7 +707,7 @@ internal sealed class UsageFlyout : Form
             var b = points[i];
             if (b.Time - a.Time > ChartGap || !SameWindow(a.WeekResetsAt, b.WeekResetsAt))
                 continue;
-            using var pen = new Pen(UsagePalette.ColorForPercent((int)Math.Round(b.Week)), S(2f)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            using var pen = new Pen(_usage.ForPercent((int)Math.Round(b.Week)), S(2f)) { StartCap = LineCap.Round, EndCap = LineCap.Round };
             g.DrawLine(pen, _chartPoints[i - 1].Point, _chartPoints[i].Point);
         }
 
@@ -680,7 +717,7 @@ internal sealed class UsageFlyout : Form
             var connectedBefore = i > 0 && points[i].Time - points[i - 1].Time <= ChartGap && SameWindow(points[i - 1].WeekResetsAt, points[i].WeekResetsAt);
             var connectedAfter = i < points.Count - 1 && points[i + 1].Time - points[i].Time <= ChartGap && SameWindow(points[i].WeekResetsAt, points[i + 1].WeekResetsAt);
             if (!connectedBefore && !connectedAfter)
-                FillDot(g, _chartPoints[i].Point, S(1.5f), UsagePalette.ColorForPercent((int)Math.Round(points[i].Week)));
+                FillDot(g, _chartPoints[i].Point, S(1.5f), _usage.ForPercent((int)Math.Round(points[i].Week)));
         }
 
         // Current pace (ring on the pace line) and current value (dot) at the right edge.
@@ -692,7 +729,7 @@ internal sealed class UsageFlyout : Form
         }
         var current = snapshot.WeeklyUtilization ?? snapshot.WeeklyPercent;
         FillDot(g, new PointF(X(now), Y(current)), S(5f), _palette.Background);
-        FillDot(g, new PointF(X(now), Y(current)), S(3.5f), UsagePalette.ColorForPercent(snapshot.WeeklyPercent));
+        FillDot(g, new PointF(X(now), Y(current)), S(3.5f), _usage.ForPercent(snapshot.WeeklyPercent));
 
         g.Clip = previousClip;
 

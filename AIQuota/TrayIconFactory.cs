@@ -9,6 +9,8 @@ namespace AIQuota;
 /// update them on every value change. At real tray size (commonly 16x16px) two legible
 /// 2-digit numbers don't fit, so the bars themselves - fill length plus colour - carry the
 /// at-a-glance signal; exact percentages are in the tooltip and context menu instead.
+/// Every colour comes from the <see cref="UsagePalette"/> passed in, which also knows
+/// whether the taskbar is light or dark.
 /// </summary>
 public static class TrayIconFactory
 {
@@ -17,23 +19,22 @@ public static class TrayIconFactory
     /// so a session that hasn't started can't be mistaken for one that just started.</param>
     /// <param name="weeklyPaceFraction">Elapsed fraction of the current 7-day window: draws the
     /// weekly pace marker on the week bar at that position; null draws no marker.</param>
-    public static Icon CreateUsageIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null, bool sessionNotStarted = false, double? weeklyPaceFraction = null)
+    internal static Icon CreateUsageIcon(UsagePalette palette, int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null, bool sessionNotStarted = false, double? weeklyPaceFraction = null)
     {
         const int size = 32;
-        var isLight = SystemTheme.IsLightTaskbar();
         using var bitmap = new Bitmap(size, size);
         using (var g = Graphics.FromImage(bitmap))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight, sessionNotStarted, weeklyPaceFraction);
+            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, palette, sessionNotStarted, weeklyPaceFraction);
 
             if (sessionRemainingFraction is { } fraction)
-                DrawSessionRing(g, fraction, size, isLight, sessionNotStarted);
+                DrawSessionRing(g, fraction, size, palette, sessionNotStarted);
 
             if (updateAvailable)
-                DrawUpdateBadge(g, size);
+                DrawUpdateBadge(g, size, palette);
         }
 
         return ToIcon(bitmap);
@@ -41,20 +42,19 @@ public static class TrayIconFactory
 
     /// <summary>Same usage bars as <see cref="CreateUsageIcon"/>, dimmed and overlaid with a
     /// spinning-refresh glyph, shown while a fetch is in flight.</summary>
-    public static Icon CreateRefreshingIcon(int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null, bool sessionNotStarted = false, double? weeklyPaceFraction = null)
+    internal static Icon CreateRefreshingIcon(UsagePalette palette, int sessionPercent, int weeklyPercent, int? creditPercent = null, bool updateAvailable = false, double? sessionRemainingFraction = null, bool sessionNotStarted = false, double? weeklyPaceFraction = null)
     {
         const int size = 32;
-        var isLight = SystemTheme.IsLightTaskbar();
         using var bitmap = new Bitmap(size, size);
         using (var g = Graphics.FromImage(bitmap))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, isLight, sessionNotStarted, weeklyPaceFraction);
+            DrawBars(g, sessionPercent, weeklyPercent, creditPercent, size, palette, sessionNotStarted, weeklyPaceFraction);
 
             if (sessionRemainingFraction is { } fraction)
-                DrawSessionRing(g, fraction, size, isLight, sessionNotStarted);
+                DrawSessionRing(g, fraction, size, palette, sessionNotStarted);
 
             using var dimBrush = new SolidBrush(Color.FromArgb(150, 20, 20, 20));
             g.FillRectangle(dimBrush, 0, 0, size, size);
@@ -62,7 +62,7 @@ public static class TrayIconFactory
             DrawRefreshGlyph(g, size);
 
             if (updateAvailable)
-                DrawUpdateBadge(g, size);
+                DrawUpdateBadge(g, size, palette);
         }
 
         return ToIcon(bitmap);
@@ -73,36 +73,36 @@ public static class TrayIconFactory
     /// for usage credits when a value is available. The session bar's track is drawn as an
     /// outline only while <paramref name="sessionNotStarted"/>. The week bar gets the pace
     /// marker when <paramref name="weeklyPaceFraction"/> is set.</summary>
-    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, int size, bool isLight, bool sessionNotStarted, double? weeklyPaceFraction)
+    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, int size, UsagePalette palette, bool sessionNotStarted, double? weeklyPaceFraction)
     {
         Rectangle weekRect;
         if (creditPercent is { } credit)
         {
             weekRect = new Rectangle(4, 12, size - 8, 7);
-            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 7), isLight, sessionNotStarted);
-            DrawBar(g, weeklyPercent, weekRect, isLight);
-            DrawBar(g, credit, new Rectangle(4, 20, size - 8, 7), isLight);
+            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 7), palette, sessionNotStarted);
+            DrawBar(g, weeklyPercent, weekRect, palette);
+            DrawBar(g, credit, new Rectangle(4, 20, size - 8, 7), palette);
         }
         else
         {
             weekRect = new Rectangle(4, 17, size - 8, 11);
-            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 11), isLight, sessionNotStarted);
-            DrawBar(g, weeklyPercent, weekRect, isLight);
+            DrawBar(g, sessionPercent, new Rectangle(4, 4, size - 8, 11), palette, sessionNotStarted);
+            DrawBar(g, weeklyPercent, weekRect, palette);
         }
 
         if (weeklyPaceFraction is { } pace)
-            DrawPaceMarker(g, weekRect, pace, isLight);
+            DrawPaceMarker(g, weekRect, pace, palette);
     }
 
     /// <summary>Draws the weekly pace marker: a vertical tick across the week bar at the
     /// position usage would have reached by now if the weekly quota were spread evenly over
-    /// the 7 days, so "fill past the tick" reads as "ahead of pace". The tick uses the
-    /// countdown ring's colour (white on a dark taskbar, dark grey on a light one), kept
-    /// apart from the green/yellow/red fill, and has a 1px outline in the opposite tone so it
-    /// stays visible over the fill and over the empty track. At 2px + 2x1px it shrinks to
+    /// the 7 days, so "fill past the tick" reads as "ahead of pace". The tick is white on a
+    /// dark taskbar and dark grey (greyscale palette: black) on a light one, kept apart from
+    /// the fill colours, and has a 1px outline in the opposite tone so it stays visible over
+    /// the fill and over the empty track. At 2px + 2x1px it shrinks to
     /// about 1px + outline at the common 16px tray size. Clipped to the bar's rounded shape,
     /// so a marker right at the start or end of the week doesn't stick out.</summary>
-    private static void DrawPaceMarker(Graphics g, Rectangle bar, double paceFraction, bool isLight)
+    private static void DrawPaceMarker(Graphics g, Rectangle bar, double paceFraction, UsagePalette palette)
     {
         const float coreWidth = 2f;
         const float outlineWidth = 1f;
@@ -111,16 +111,14 @@ public static class TrayIconFactory
         var x = bar.X + bar.Width * (float)Math.Clamp(paceFraction, 0.0, 1.0);
         x = Math.Clamp(x, bar.X + halfCore, bar.Right - halfCore);
 
-        var coreColor = isLight ? Color.FromArgb(235, 40, 40, 40) : Color.FromArgb(235, Color.White);
-        var outlineColor = isLight ? Color.FromArgb(230, Color.White) : Color.FromArgb(230, 20, 20, 20);
 
         using var barPath = RoundedRect(bar, Math.Min(4, bar.Height / 2));
         var previousClip = g.Clip;
         g.SetClip(barPath, CombineMode.Intersect);
 
-        using (var outlineBrush = new SolidBrush(outlineColor))
+        using (var outlineBrush = new SolidBrush(palette.PaceOutline))
             g.FillRectangle(outlineBrush, x - halfCore - outlineWidth, bar.Y, coreWidth + 2 * outlineWidth, bar.Height);
-        using (var coreBrush = new SolidBrush(coreColor))
+        using (var coreBrush = new SolidBrush(palette.PaceCore))
             g.FillRectangle(coreBrush, x - halfCore, bar.Y, coreWidth, bar.Height);
 
         g.Clip = previousClip;
@@ -134,12 +132,12 @@ public static class TrayIconFactory
     /// track - an hour that has elapsed just isn't drawn at all - so the number of visible
     /// segments alone answers "how many hours are left" at a glance. Segments light up
     /// clockwise from top-center and go dark one by one as the reset approaches. Kept visually
-    /// distinct from the green/orange/red usage bars so "time left" is never mistaken for
-    /// "quota used": white on a dark taskbar, and a very dark grey on a light one (<paramref
-    /// name="isLight"/>) so it keeps enough contrast either way. While <paramref
+    /// distinct from the usage bars so "time left" is never mistaken for "quota used": white on
+    /// a dark taskbar and a very dark grey on a light one, or in the greyscale palette a mid
+    /// grey that differs from the brightest fill (see <see cref="UsagePalette.Ring"/>). While <paramref
     /// name="notStarted"/> the segments are drawn dimmed: all 5 hours are still available, but
     /// the clock isn't ticking yet.</summary>
-    private static void DrawSessionRing(Graphics g, double remainingFraction, int size, bool isLight, bool notStarted)
+    private static void DrawSessionRing(Graphics g, double remainingFraction, int size, UsagePalette palette, bool notStarted)
     {
         const float penWidth = 2.4f;
         const float radius = 8f;
@@ -156,10 +154,7 @@ public static class TrayIconFactory
         var segmentLength = totalLength / segmentCount;
         var targetLength = totalLength * (float)Math.Clamp(remainingFraction, 0.0, 1.0);
 
-        var fillColor = notStarted
-            ? TrackColor(isLight)
-            : isLight ? Color.FromArgb(235, 40, 40, 40) : Color.FromArgb(235, Color.White);
-        using var fillPen = new Pen(fillColor, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var fillPen = new Pen(notStarted ? palette.NotStarted : palette.Ring, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
 
         for (var i = 0; i < segmentCount; i++)
         {
@@ -261,10 +256,10 @@ public static class TrayIconFactory
         return (float)Math.Sqrt(dx * dx + dy * dy);
     }
 
-    public static Icon CreateUnavailableIcon(bool updateAvailable = false)
+    internal static Icon CreateUnavailableIcon(UsagePalette palette, bool updateAvailable = false)
     {
         const int size = 32;
-        var isLight = SystemTheme.IsLightTaskbar();
+        var isLight = palette.IsLight;
         using var bitmap = new Bitmap(size, size);
         using (var g = Graphics.FromImage(bitmap))
         {
@@ -285,7 +280,7 @@ public static class TrayIconFactory
                 (size - textSize.Height) / 2f);
 
             if (updateAvailable)
-                DrawUpdateBadge(g, size);
+                DrawUpdateBadge(g, size, palette);
         }
 
         return ToIcon(bitmap);
@@ -293,8 +288,10 @@ public static class TrayIconFactory
 
     /// <summary>Warning-triangle glyph, shown when a fetch fails with a network error
     /// (e.g. no internet connection) so it's visually distinct from the "?" unavailable
-    /// icon (not logged in) and the spinning refresh icon (fetch in flight).</summary>
-    public static Icon CreateWarningIcon(bool updateAvailable = false)
+    /// icon (not logged in) and the spinning refresh icon (fetch in flight). Orange, or in
+    /// the greyscale palette black with a white outline and a white "!", which reads on
+    /// both a light and a dark taskbar.</summary>
+    internal static Icon CreateWarningIcon(UsagePalette palette, bool updateAvailable = false)
     {
         const int size = 32;
         using var bitmap = new Bitmap(size, size);
@@ -303,48 +300,59 @@ public static class TrayIconFactory
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
 
-            var color = Color.FromArgb(240, 170, 60);
-            using var trianglePath = new GraphicsPath();
-            trianglePath.AddPolygon([
-                new PointF(size / 2f, 3f),
-                new PointF(size - 3f, size - 4f),
-                new PointF(3f, size - 4f),
-            ]);
-            trianglePath.CloseFigure();
-
-            using (var brush = new SolidBrush(color))
-                g.FillPath(brush, trianglePath);
-
-            using var textBrush = new SolidBrush(Color.FromArgb(230, 40, 30, 0));
-            using var font = new Font("Segoe UI", 15f, FontStyle.Bold, GraphicsUnit.Pixel);
-            var textSize = g.MeasureString("!", font);
-            g.DrawString("!", font, textBrush,
-                (size - textSize.Width) / 2f,
-                (size - textSize.Height) / 2f + 2f);
+            DrawWarning(g, size, palette);
 
             if (updateAvailable)
-                DrawUpdateBadge(g, size);
+                DrawUpdateBadge(g, size, palette);
         }
 
         return ToIcon(bitmap);
     }
 
-    /// <summary>Small yellow dot in the top-right corner flagging that a newer version is
-    /// available - drawn last so it sits on top of whatever the base icon already shows.</summary>
-    private static void DrawUpdateBadge(Graphics g, int size)
+    private static void DrawWarning(Graphics g, int size, UsagePalette palette)
+    {
+        using var trianglePath = new GraphicsPath();
+        trianglePath.AddPolygon([
+            new PointF(size / 2f, 3f),
+            new PointF(size - 3f, size - 4f),
+            new PointF(3f, size - 4f),
+        ]);
+        trianglePath.CloseFigure();
+
+        using (var brush = new SolidBrush(palette.WarningFill))
+            g.FillPath(brush, trianglePath);
+        if (palette.WarningOutline is { } outline)
+        {
+            using var outlinePen = new Pen(outline, 2f) { LineJoin = LineJoin.Round };
+            g.DrawPath(outlinePen, trianglePath);
+        }
+
+        using var textBrush = new SolidBrush(palette.WarningGlyph);
+        using var font = new Font("Segoe UI", 15f, FontStyle.Bold, GraphicsUnit.Pixel);
+        var textSize = g.MeasureString("!", font);
+        g.DrawString("!", font, textBrush,
+            (size - textSize.Width) / 2f,
+            (size - textSize.Height) / 2f + 2f);
+    }
+
+    /// <summary>Small dot in the top-right corner flagging that a newer version is available
+    /// (yellow, or in the greyscale palette the taskbar's contrast colour with an outline in
+    /// the opposite tone) - drawn last so it sits on top of whatever the base icon already
+    /// shows.</summary>
+    private static void DrawUpdateBadge(Graphics g, int size, UsagePalette palette)
     {
         const float diameter = 11f;
         var rect = new RectangleF(size - diameter - 0.5f, 0.5f, diameter, diameter);
 
-        using var border = new Pen(Color.FromArgb(220, 40, 40, 40), 1.5f);
-        using var fill = new SolidBrush(Color.FromArgb(255, 255, 205, 0));
+        using var border = new Pen(palette.BadgeBorder, palette.IsGreyscale ? 2f : 1.5f);
+        using var fill = new SolidBrush(palette.BadgeFill);
         g.FillEllipse(fill, rect);
         g.DrawEllipse(border, rect);
     }
 
     /// <param name="outlineOnly">Draw the track as an outline instead of a filled shape - used
     /// for the session bar while no session has started yet.</param>
-    private static void DrawBar(Graphics g, int percent, Rectangle rect, bool isLight, bool outlineOnly = false)
+    private static void DrawBar(Graphics g, int percent, Rectangle rect, UsagePalette palette, bool outlineOnly = false)
     {
         var clamped = Math.Clamp(percent, 0, 100);
         var radius = Math.Min(4, rect.Height / 2);
@@ -354,14 +362,24 @@ public static class TrayIconFactory
             const float outlineWidth = 2f;
             var inset = RectangleF.Inflate(rect, -outlineWidth / 2f, -outlineWidth / 2f);
             using var outlinePath = RoundedRect(inset, radius - outlineWidth / 2f);
-            using var outlinePen = new Pen(TrackColor(isLight), outlineWidth);
+            using var outlinePen = new Pen(palette.NotStarted, outlineWidth);
             g.DrawPath(outlinePen, outlinePath);
         }
         else
         {
             using var trackPath = RoundedRect(rect, radius);
-            using var trackBrush = new SolidBrush(TrackColor(isLight));
+            using var trackBrush = new SolidBrush(palette.Track);
             g.FillPath(trackBrush, trackPath);
+
+            if (palette.TrackOutline is { } outlineColor)
+            {
+                // 1.5px on the 32px canvas: about 1px at the common 16-24px tray sizes.
+                const float outlineWidth = 1.5f;
+                var inset = RectangleF.Inflate(rect, -outlineWidth / 2f, -outlineWidth / 2f);
+                using var outlinePath = RoundedRect(inset, radius - outlineWidth / 2f);
+                using var outlinePen = new Pen(outlineColor, outlineWidth);
+                g.DrawPath(outlinePen, outlinePath);
+            }
         }
 
         var fillWidth = Math.Max((int)Math.Round(rect.Width * clamped / 100.0), clamped > 0 ? 6 : 0);
@@ -369,9 +387,28 @@ public static class TrayIconFactory
         {
             var fillRect = new Rectangle(rect.X, rect.Y, Math.Min(fillWidth, rect.Width), rect.Height);
             using var fillPath = RoundedRect(fillRect, radius);
-            using var fillBrush = new SolidBrush(UsagePalette.ColorForPercent(clamped));
+            using var fillBrush = new SolidBrush(palette.ForPercent(clamped));
             g.FillPath(fillBrush, fillPath);
+
+            if (palette.MarksHighLevel && UsagePalette.IsHigh(clamped))
+                DrawHighNotch(g, fillPath, fillRect, palette.HighNotch);
         }
+    }
+
+    /// <summary>The greyscale palette's shape cue for a level above 80%: a contrasting
+    /// notch across the fill just inside its end - the bar reads as "fill, gap, short cap" -
+    /// so it can be told apart from the 50-80% level by shape, not just by brightness.
+    /// Clipped to the fill's rounded shape.</summary>
+    private static void DrawHighNotch(Graphics g, GraphicsPath fillPath, RectangleF fill, Color color)
+    {
+        const float notchWidth = 2f;
+        const float capWidth = 3f;
+
+        var previousClip = g.Clip;
+        g.SetClip(fillPath, CombineMode.Intersect);
+        using (var brush = new SolidBrush(color))
+            g.FillRectangle(brush, fill.Right - capWidth - notchWidth, fill.Y, notchWidth, fill.Height);
+        g.Clip = previousClip;
     }
 
     /// <summary>Draws a clockwise circular-arrow ("refresh") glyph, centered in a square of the given size.</summary>
@@ -418,12 +455,6 @@ public static class TrayIconFactory
         path.CloseFigure();
         return path;
     }
-
-    /// <summary>Background (empty part) of a usage bar. Also used for the session bar outline
-    /// and the countdown ring while no session has started, so both read as "available, but
-    /// not active".</summary>
-    private static Color TrackColor(bool isLight) =>
-        isLight ? Color.FromArgb(127, Color.Black) : Color.FromArgb(127, Color.White);
 
 
     private static Icon ToIcon(Bitmap bitmap)

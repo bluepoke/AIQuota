@@ -3,7 +3,8 @@
 //     dotnet run --project tools/Screenshots [output directory]
 //
 // Writes tray_icon_states.png, context_menu.png, flyout_dark.png and flyout_light.png to the
-// repository's screenshots/ folder (or the given directory).
+// repository's screenshots/ folder (or the given directory), and the same tray icons and
+// flyouts in accessibility mode (accessibility_*.png), plus its Stream Dock keys.
 //
 // - Tray icon and flyout are drawn by the app's own TrayIconFactory and UsageFlyout. Their
 //   drawing methods and fields are private, so they're reached by reflection - if a rename
@@ -22,6 +23,7 @@ using System.Reflection;
 using AIQuota;
 using AIQuota.History;
 using AIQuota.Localization;
+using AIQuota.StreamDock;
 
 Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
 var outDir = args.Length > 0 ? args[0] : Path.Combine(FindRepositoryRoot(), "screenshots");
@@ -38,39 +40,57 @@ typeof(Strings).GetProperty("Current")!.SetValue(null, Enum.Parse(asm.GetType("A
 var now = DateTimeOffset.Now;
 const string Account = "Jane Doe (jane@example.com)";
 
+// UsagePalette is internal: the standard or greyscale (accessibility mode) palette for a
+// light or dark background.
+object Palette(bool greyscale, bool isLight) =>
+    asm.GetType("AIQuota.UsagePalette")!.GetMethod("For", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, [greyscale, isLight])!;
+
 // ------------------------------------------------------------------ tray icon states
+void TraySheet(bool greyscale, string fileName)
 {
     var drawBars = typeof(TrayIconFactory).GetMethod("DrawBars", PrivStatic)!;
     var drawRing = typeof(TrayIconFactory).GetMethod("DrawSessionRing", PrivStatic)!;
     var drawBadge = typeof(TrayIconFactory).GetMethod("DrawUpdateBadge", PrivStatic)!;
+    var drawWarning = typeof(TrayIconFactory).GetMethod("DrawWarning", PrivStatic)!;
 
-    Bitmap Icon(int session, int week, int? credit, double? ring, bool notStarted, double? pace, bool badge, bool isLight, int px)
+    Bitmap Icon(int session, int week, int? credit, double? ring, bool notStarted, double? pace, bool badge, bool warning, bool isLight, int px)
     {
+        var palette = Palette(greyscale, isLight);
         var bmp = new Bitmap(px, px);
         using var g = Graphics.FromImage(bmp);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(Color.Transparent);
         g.ScaleTransform(px / 32f, px / 32f);   // the factory draws on a fixed 32px canvas
-        drawBars.Invoke(null, [g, session, week, credit, 32, isLight, notStarted, pace]);
-        if (ring is { } r) drawRing.Invoke(null, [g, r, 32, isLight, notStarted]);
-        if (badge) drawBadge.Invoke(null, [g, 32]);
+        if (warning)
+        {
+            drawWarning.Invoke(null, [g, 32, palette]);
+        }
+        else
+        {
+            drawBars.Invoke(null, [g, session, week, credit, 32, palette, notStarted, pace]);
+            if (ring is { } r) drawRing.Invoke(null, [g, r, 32, palette, notStarted]);
+        }
+        if (badge) drawBadge.Invoke(null, [g, 32, palette]);
         return bmp;
     }
 
-    var states = new (string Label, int S, int W, int? C, double? Ring, bool NotStarted, double? Pace, bool Badge)[]
+    var states = new List<(string Label, int S, int W, int? C, double? Ring, bool NotStarted, double? Pace, bool Badge, bool Warning)>
     {
-        ("3.2h left, ahead of pace", 37, 62, null, 3.2 / 5, false, 0.43, false),
-        ("With usage credits", 72, 41, 25, 1.6 / 5, false, 0.33, false),
-        ("Session not started", 0, 20, null, 1.0, true, 0.30, false),
-        ("Nearly used up", 93, 85, null, 0.6 / 5, false, 0.71, false),
-        ("Update available", 55, 48, null, 4.1 / 5, false, 0.60, true),
+        ("3.2h left, ahead of pace", 37, 62, null, 3.2 / 5, false, 0.43, false, false),
+        ("With usage credits", 72, 41, 25, 1.6 / 5, false, 0.33, false, false),
+        ("Session not started", 0, 20, null, 1.0, true, 0.30, false, false),
+        ("Nearly used up", 93, 85, null, 0.6 / 5, false, 0.71, false, false),
+        ("Update available", 55, 48, null, 4.1 / 5, false, 0.60, true, false),
     };
+    if (greyscale)
+        states.Add(("Network error", 0, 0, null, null, false, null, false, true));
 
     const int cellW = 150, big = 96, rowH = 170;
-    using var sheet = new Bitmap(cellW * states.Length + 24, rowH * 2);
+    using var sheet = new Bitmap(cellW * states.Count + 24, rowH * 2);
     using (var g = Graphics.FromImage(sheet))
     {
-        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+        // Greyscale smoothing for the accessibility sheet: ClearType fringes would add hue.
+        g.TextRenderingHint = greyscale ? System.Drawing.Text.TextRenderingHint.AntiAliasGridFit : System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
         foreach (var (row, isLight) in new[] { (0, false), (1, true) })
         {
             var bg = isLight ? Color.FromArgb(238, 238, 238) : Color.FromArgb(32, 32, 32);
@@ -83,21 +103,71 @@ const string Account = "Jane Doe (jane@example.com)";
             using var center = new StringFormat { Alignment = StringAlignment.Center };
             g.DrawString(isLight ? "Light taskbar" : "Dark taskbar", small, dimBrush, 12, row * rowH + 6);
 
-            for (var i = 0; i < states.Length; i++)
+            for (var i = 0; i < states.Count; i++)
             {
                 var s = states[i];
                 var x = 12 + i * cellW;
                 var y = row * rowH + 26;
-                using (var icon = Icon(s.S, s.W, s.C, s.Ring, s.NotStarted, s.Pace, s.Badge, isLight, big))
+                using (var icon = Icon(s.S, s.W, s.C, s.Ring, s.NotStarted, s.Pace, s.Badge, s.Warning, isLight, big))
                     g.DrawImage(icon, x + (cellW - big) / 2 - 14, y);
                 // Actual tray size next to it (24px = 16px icon at 150% scaling).
-                using (var icon = Icon(s.S, s.W, s.C, s.Ring, s.NotStarted, s.Pace, s.Badge, isLight, 24))
+                using (var icon = Icon(s.S, s.W, s.C, s.Ring, s.NotStarted, s.Pace, s.Badge, s.Warning, isLight, 24))
                     g.DrawImage(icon, x + (cellW - big) / 2 - 14 + big + 8, y + big - 24);
                 g.DrawString(s.Label, font, fgBrush, new RectangleF(x, y + big + 10, cellW - 8, 36), center);
             }
         }
     }
-    sheet.Save(Path.Combine(outDir, "tray_icon_states.png"), ImageFormat.Png);
+    sheet.Save(Path.Combine(outDir, fileName), ImageFormat.Png);
+}
+TraySheet(greyscale: false, "tray_icon_states.png");
+TraySheet(greyscale: true, "accessibility_tray_icon_states.png");
+
+// ------------------------------------------------------------------ Stream Dock keys (accessibility mode)
+{
+    var render = asm.GetType("AIQuota.StreamDock.DeckKeyRenderer")!.GetMethod("Render", BindingFlags.Public | BindingFlags.Static)!;
+    var keys = new (string Label, DeckKeyStyle Style, DeckStatusSnapshot Snapshot)[]
+    {
+        ("Combined", DeckKeyStyle.Combined, Deck(37, 62, null, 3.2 / 5, 0.43)),
+        ("Combined, high", DeckKeyStyle.Combined, Deck(93, 85, 25, 0.6 / 5, 0.71)),
+        ("Session", DeckKeyStyle.Session, Deck(72, 41, null, 1.6 / 5, null)),
+        ("Week", DeckKeyStyle.Week, Deck(37, 85, null, null, 0.71)),
+        ("Credit", DeckKeyStyle.Credit, Deck(37, 62, 25, null, null)),
+        ("Network error", DeckKeyStyle.Combined, Deck(0, 0, null, null, null) with { IsWarning = true }),
+    };
+
+    const int key = 128, cellW = 150, rowH = 180;
+    using var sheet = new Bitmap(cellW * keys.Length + 24, rowH);
+    using (var g = Graphics.FromImage(sheet))
+    {
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.Clear(Color.FromArgb(50, 50, 52));
+        using var font = new Font("Segoe UI", 12f, GraphicsUnit.Pixel);
+        using var fgBrush = new SolidBrush(Color.FromArgb(225, 225, 225));
+        using var center = new StringFormat { Alignment = StringAlignment.Center };
+        for (var i = 0; i < keys.Length; i++)
+        {
+            var (label, style, deck) = keys[i];
+            var png = (byte[])render.Invoke(null, [deck, style])!;
+            using var image = Image.FromStream(new MemoryStream(png));
+            var x = 12 + i * cellW;
+            using (var path = Rounded(new RectangleF(x + (cellW - key) / 2, 16, key, key), 14))
+            using (var texture = new TextureBrush(image) { WrapMode = WrapMode.Clamp })
+            {
+                texture.TranslateTransform(x + (cellW - key) / 2, 16);
+                texture.ScaleTransform(key / (float)image.Width, key / (float)image.Height);
+                g.FillPath(texture, path);
+            }
+            g.DrawString(label, font, fgBrush, new RectangleF(x, 16 + key + 10, cellW - 8, 36), center);
+        }
+    }
+    sheet.Save(Path.Combine(outDir, "accessibility_deck_keys.png"), ImageFormat.Png);
+
+    static DeckStatusSnapshot Deck(int session, int week, int? credit, double? remaining, double? pace) => new(
+        LoggedIn: true, IsWarning: false, IsRefreshing: false,
+        SessionPercent: session, WeeklyPercent: week, CreditPercent: credit,
+        SessionRemainingFraction: remaining, SessionNotStarted: false, ShowSessionRing: remaining is not null,
+        WeeklyPaceFraction: pace, Greyscale: true);
 }
 
 // ------------------------------------------------------------------ mock usage history
@@ -175,17 +245,18 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
     var stateType = asm.GetType("AIQuota.FlyoutState")!;
     var paletteType = flyoutType.GetNestedType("Palette", BindingFlags.NonPublic)!;
 
-    var state = Activator.CreateInstance(stateType,
-        true, Account, Strings.StatusUpdated(snapshot.FetchedAt), false, snapshot, 25, false, true,
-        new UsageForecast(ForecastKind.Limit, TimeSpan.FromMinutes(38)), new UsageForecast(ForecastKind.ResetFirst),
-        (IReadOnlyList<UsageHistoryRecord>)history)!;
-    var getter = Delegate.CreateDelegate(typeof(Func<>).MakeGenericType(stateType), new Holder(state),
-        typeof(Holder).GetMethod(nameof(Holder.Get))!.MakeGenericMethod(stateType));
-
-    foreach (var light in new[] { false, true })
+    foreach (var (light, greyscale) in new[] { (false, false), (true, false), (false, true), (true, true) })
     {
+        var state = Activator.CreateInstance(stateType,
+            true, Account, Strings.StatusUpdated(snapshot.FetchedAt), false, snapshot, 25, false, true,
+            new UsageForecast(ForecastKind.Limit, TimeSpan.FromMinutes(38)), new UsageForecast(ForecastKind.ResetFirst),
+            (IReadOnlyList<UsageHistoryRecord>)history, greyscale)!;
+        var getter = Delegate.CreateDelegate(typeof(Func<>).MakeGenericType(stateType), new Holder(state),
+            typeof(Holder).GetMethod(nameof(Holder.Get))!.MakeGenericMethod(stateType));
+
         var flyout = (Form)Activator.CreateInstance(flyoutType, getter, (Func<Task>)(() => Task.CompletedTask))!;
         flyoutType.GetField("_palette", PrivInst)!.SetValue(flyout, paletteType.GetMethod("For")!.Invoke(null, [light]));
+        flyoutType.GetField("_usage", PrivInst)!.SetValue(flyout, Palette(greyscale, light));
         flyoutType.GetField("_scale", PrivInst)!.SetValue(flyout, 2f);
         flyoutType.GetMethod("ApplyLayout", PrivInst)!.Invoke(flyout, null);
 
@@ -201,7 +272,8 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
         flyout.Dispose();
 
         using var framed = Frame(bmp, radius: 16, light: light);
-        framed.Save(Path.Combine(outDir, light ? "flyout_light.png" : "flyout_dark.png"), ImageFormat.Png);
+        var name = (greyscale ? "accessibility_" : "") + (light ? "flyout_light.png" : "flyout_dark.png");
+        framed.Save(Path.Combine(outDir, name), ImageFormat.Png);
     }
 }
 

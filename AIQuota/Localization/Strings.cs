@@ -42,6 +42,10 @@ public static class Strings
     public static string MenuCheckForNewVersion => T("Automatisch nach neuer Version suchen", "Automatically check for new version");
     public static string MenuShowSessionRing => T("Sitzungs-Countdown-Ring anzeigen", "Show session countdown ring");
     public static string MenuShowWeeklyPace => T("Pace-Markierungen anzeigen", "Show pace markers");
+    public static string MenuAccessibilityMode => T("Barrierefreiheitsmodus (kontrastreiche Graustufen)", "Accessibility mode (high-contrast greyscale)");
+    public static string MenuAccessibilityModeForced => T(
+        "Barrierefreiheitsmodus (aktiv, solange ein Windows-Kontrastdesign an ist)",
+        "Accessibility mode (on while a Windows contrast theme is active)");
     public static string MenuEnableStreamDock => T("Auf Stream-Dock-Controller anzeigen", "Show on Stream Dock controller");
     public static string MenuNewVersionAvailable(string version) => T($"Neue Version verfügbar: v{version}", $"New version available: v{version}");
     public static string MenuRefresh => T("Jetzt aktualisieren", "Refresh now");

@@ -24,7 +24,8 @@ the [weekly pace marker](#weekly-pace-marker) on the week bar, and a yellow dot 
 version is available.
 
 Each bar is colour-coded (green ≤ 50%, yellow 50–80%, red > 80%) so you can tell your
-usage level without reading a number. Hover over the icon for exact percentages plus
+usage level without reading a number (or, in [accessibility mode](#accessibility), by
+brightness and shape instead of colour). Hover over the icon for exact percentages plus
 the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 `Week: 82% (2d3h)`, `Credits: 25%`):
 
@@ -33,7 +34,7 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
 a burn-rate forecast, usage credit balance (used/limit, when available), manual refresh,
 login/logout, usage history export/clear, run-at-startup toggle, a session countdown ring
-toggle, a weekly pace marker toggle, a Stream Dock controller toggle, a
+toggle, a weekly pace marker toggle, an accessibility mode toggle, a Stream Dock controller toggle, a
 check-for-new-version toggle, and a language switch (German/English):
 
 ![Right-click menu with account, usage with forecast, credits, and app options](screenshots/context_menu.png)
@@ -185,6 +186,45 @@ The history stays on your PC. Nothing is sent anywhere.
 - **Usage history → Export as CSV…** saves the signed-in account's history as a CSV file.
   It uses the list and decimal separators from your Windows region settings, so it opens
   as proper columns in Excel on German and English systems alike.
+
+### Accessibility
+
+**Settings → Accessibility mode (high-contrast greyscale)** replaces the green/yellow/red
+colours with a black, white and grey palette for people with achromatopsia (complete colour
+blindness) or anyone who finds the colours hard to tell apart. No information is shown by
+colour alone:
+
+- **Usage level by brightness**: the higher the usage, the more the fill stands out from
+  the bar's background - mid grey up to 50%, light grey up to 80%, white above (on a light
+  taskbar the other way round: mid grey, dark grey, black).
+- **Above 80% also by shape**: a notch just before the end of the fill on the tray icon and
+  in the flyout, and diagonal hatching on the Stream Dock keys.
+- **Bar background**: dark (or light) grey with a thin outline, so the bar's full length
+  stays visible against the taskbar without adding large bright areas.
+- **Countdown ring**: a mid grey that differs from the brightest fill, so a nearly full
+  bar and the ring don't merge.
+- **Warning icon and update dot**: black and white with an outline, readable on both a
+  light and a dark taskbar.
+- **Stream Dock keys**: keep their dark background. The text inside a bar changes colour
+  where it crosses the fill edge, so it stays readable on both parts.
+
+The setting is off by default, saved across restarts, and applies immediately to the tray
+icon, the flyout and the Stream Dock keys. It's also on automatically while a Windows
+contrast theme is active (the menu entry then shows it as checked and can't be turned
+off). The tooltip and the menu don't change: they already show the exact percentages.
+
+![Tray icon in accessibility mode on a dark and a light taskbar](screenshots/accessibility_tray_icon_states.png)
+
+<p>
+  <img src="screenshots/accessibility_flyout_dark.png" width="372" alt="Tray flyout in accessibility mode, dark theme">
+  <img src="screenshots/accessibility_flyout_light.png" width="372" alt="Tray flyout in accessibility mode, light theme">
+</p>
+
+![Stream Dock keys in accessibility mode](screenshots/accessibility_deck_keys.png)
+
+Contrast (WCAG 2.1): every fill has at least 3.7:1 against the bar background, the bar
+outline at least 3.5:1 against the taskbar or flyout background, and text on the Stream
+Dock keys at least 7.4:1.
 
 ## Installation
 

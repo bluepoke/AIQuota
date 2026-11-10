@@ -41,6 +41,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _startupItem;
     private readonly ToolStripMenuItem _showSessionRingItem;
     private readonly ToolStripMenuItem _showWeeklyPaceItem;
+    private readonly ToolStripMenuItem _accessibilityModeItem;
     private readonly ToolStripMenuItem _streamDockItem;
     private readonly ToolStripMenuItem _checkForNewVersionItem;
     private readonly ToolStripMenuItem _newVersionAvailableItem;
@@ -87,7 +88,18 @@ public sealed class UsageTrayContext : ApplicationContext
     private IconKind _currentIconKind = IconKind.Unavailable;
     private string[] _tooltipCandidates = [""];
 
+    /// <summary>The saved accessibility-mode choice; the mode is also on while Windows High
+    /// Contrast is (see <see cref="GreyscaleActive"/>).</summary>
+    private bool _accessibilityModeEnabled = AccessibilityModePreference.IsEnabled();
+
     private bool HasUpdate => _availableUpdate is not null;
+
+    /// <summary>Whether the tray icon, flyout and deck keys use the greyscale palette.</summary>
+    private bool GreyscaleActive => AccessibilityModePreference.IsActive(_accessibilityModeEnabled);
+
+    /// <summary>The palette the tray icon is drawn with: standard or greyscale, for the
+    /// current taskbar theme.</summary>
+    private UsagePalette TrayPalette => UsagePalette.For(GreyscaleActive, SystemTheme.IsLightTaskbar());
 
     /// <summary>The API omits the session reset time whenever no 5-hour session is currently
     /// running (no message sent since the last one expired).</summary>
@@ -115,6 +127,8 @@ public sealed class UsageTrayContext : ApplicationContext
         _showSessionRingItem.Click += OnToggleSessionRing;
         _showWeeklyPaceItem = new ToolStripMenuItem { CheckOnClick = false, Checked = WeeklyPacePreference.IsEnabled() };
         _showWeeklyPaceItem.Click += OnToggleWeeklyPace;
+        _accessibilityModeItem = new ToolStripMenuItem { CheckOnClick = false };
+        _accessibilityModeItem.Click += OnToggleAccessibilityMode;
         _streamDockItem = new ToolStripMenuItem { CheckOnClick = false, Checked = StreamDockPreference.IsEnabled() };
         _streamDockItem.Click += OnToggleStreamDock;
         _checkForNewVersionItem = new ToolStripMenuItem { CheckOnClick = false, Checked = NewVersionPreference.IsEnabled() };
@@ -141,6 +155,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _settingsMenu.DropDownItems.Add(_startupItem);
         _settingsMenu.DropDownItems.Add(_showSessionRingItem);
         _settingsMenu.DropDownItems.Add(_showWeeklyPaceItem);
+        _settingsMenu.DropDownItems.Add(_accessibilityModeItem);
         _settingsMenu.DropDownItems.Add(_streamDockItem);
         _settingsMenu.DropDownItems.Add(_checkForNewVersionItem);
         _settingsMenu.DropDownItems.Add(_languageMenu);
@@ -178,7 +193,7 @@ public sealed class UsageTrayContext : ApplicationContext
 
         _notifyIcon = new NotifyIcon
         {
-            Icon = TrayIconFactory.CreateUnavailableIcon(),
+            Icon = TrayIconFactory.CreateUnavailableIcon(TrayPalette),
             ContextMenuStrip = menu,
             Visible = true,
         };
@@ -224,6 +239,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _startupItem.Text = Strings.MenuStartup;
         _showSessionRingItem.Text = Strings.MenuShowSessionRing;
         _showWeeklyPaceItem.Text = Strings.MenuShowWeeklyPace;
+        ApplyAccessibilityMenuState();
         _streamDockItem.Text = Strings.MenuEnableStreamDock;
         _checkForNewVersionItem.Text = Strings.MenuCheckForNewVersion;
         if (_availableUpdate is not null)
@@ -345,14 +361,16 @@ public sealed class UsageTrayContext : ApplicationContext
         _startupItem.Checked = StartupManager.IsEnabled();
     }
 
-    /// <summary>Redraws the tray icon right away when the Windows light/dark theme changes,
-    /// so its colours (picked per-theme in <see cref="TrayIconFactory"/>) stay legible instead
-    /// of waiting for the next usage poll.</summary>
+    /// <summary>Redraws the tray icon right away when the Windows light/dark theme or High
+    /// Contrast changes, so its colours (picked per-theme in <see cref="UsagePalette"/>) stay
+    /// legible instead of waiting for the next usage poll.</summary>
     private void OnSystemPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
     {
         if (e.Category == Microsoft.Win32.UserPreferenceCategory.General ||
-            e.Category == Microsoft.Win32.UserPreferenceCategory.Color)
+            e.Category == Microsoft.Win32.UserPreferenceCategory.Color ||
+            e.Category == Microsoft.Win32.UserPreferenceCategory.Accessibility)
         {
+            ApplyAccessibilityMenuState();
             RedrawIconForCurrentState();
             UpdateFlyout();
         }
@@ -381,7 +399,8 @@ public sealed class UsageTrayContext : ApplicationContext
         ShowPaceMarker: _showWeeklyPaceItem.Checked,
         SessionForecast: _sessionForecast,
         WeeklyForecast: _weeklyForecast,
-        History: _history.Records);
+        History: _history.Records,
+        Greyscale: GreyscaleActive);
 
     private void OnToggleSessionRing(object? sender, EventArgs e)
     {
@@ -408,6 +427,27 @@ public sealed class UsageTrayContext : ApplicationContext
                 ApplyUsageTooltip(snapshot);
         }
         UpdateFlyout();
+    }
+
+    /// <summary>Switches the accessibility mode (greyscale palette) and redraws the tray icon,
+    /// the flyout and - via the deck snapshot - the Stream Dock keys right away.</summary>
+    private void OnToggleAccessibilityMode(object? sender, EventArgs e)
+    {
+        _accessibilityModeEnabled = !_accessibilityModeEnabled;
+        AccessibilityModePreference.SetEnabled(_accessibilityModeEnabled);
+        ApplyAccessibilityMenuState();
+        RedrawIconForCurrentState();
+        UpdateFlyout();
+    }
+
+    /// <summary>The menu entry shows the saved choice, or - while Windows High Contrast forces
+    /// the mode on - checked and disabled, with a note saying why.</summary>
+    private void ApplyAccessibilityMenuState()
+    {
+        var forced = AccessibilityModePreference.ForcedBySystem;
+        _accessibilityModeItem.Checked = forced || _accessibilityModeEnabled;
+        _accessibilityModeItem.Enabled = !forced;
+        _accessibilityModeItem.Text = forced ? Strings.MenuAccessibilityModeForced : Strings.MenuAccessibilityMode;
     }
 
     private void OnToggleStreamDock(object? sender, EventArgs e)
@@ -526,7 +566,7 @@ public sealed class UsageTrayContext : ApplicationContext
             if (_hasUsageSnapshot)
             {
                 _currentIconKind = IconKind.Refreshing;
-                SetIcon(TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction));
+                SetIcon(TrayIconFactory.CreateRefreshingIcon(TrayPalette, _lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction));
             }
             UpdateFlyout();
 
@@ -574,7 +614,7 @@ public sealed class UsageTrayContext : ApplicationContext
         {
             case UsageFetchStatus.NotLoggedIn:
                 _currentIconKind = IconKind.Unavailable;
-                SetIcon(TrayIconFactory.CreateUnavailableIcon(HasUpdate));
+                SetIcon(TrayIconFactory.CreateUnavailableIcon(TrayPalette, HasUpdate));
                 SetNotifyIconText(Strings.TooltipNotLoggedIn);
                 ForgetAccount();
                 _hasUsageSnapshot = false;
@@ -592,7 +632,7 @@ public sealed class UsageTrayContext : ApplicationContext
             case UsageFetchStatus.AuthExpired:
                 _oauth.Logout();
                 _currentIconKind = IconKind.Unavailable;
-                SetIcon(TrayIconFactory.CreateUnavailableIcon(HasUpdate));
+                SetIcon(TrayIconFactory.CreateUnavailableIcon(TrayPalette, HasUpdate));
                 SetNotifyIconText(Strings.TooltipAuthExpired);
                 ForgetAccount();
                 _hasUsageSnapshot = false;
@@ -607,7 +647,7 @@ public sealed class UsageTrayContext : ApplicationContext
 
             case UsageFetchStatus.NetworkError:
                 _currentIconKind = IconKind.Warning;
-                SetIcon(TrayIconFactory.CreateWarningIcon(HasUpdate));
+                SetIcon(TrayIconFactory.CreateWarningIcon(TrayPalette, HasUpdate));
                 _statusItem.Text = Strings.FetchError(result.Error ?? "");
                 SetNotifyIconText(Strings.FetchError(result.Error ?? ""));
                 return;
@@ -629,7 +669,7 @@ public sealed class UsageTrayContext : ApplicationContext
         UpdateForecasts(snapshot);
 
         _currentIconKind = IconKind.Usage;
-        SetIcon(TrayIconFactory.CreateUsageIcon(snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction));
+        SetIcon(TrayIconFactory.CreateUsageIcon(TrayPalette, snapshot.SessionPercent, snapshot.WeeklyPercent, creditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction));
 
         ApplyUsageTooltip(snapshot);
 
@@ -734,19 +774,21 @@ public sealed class UsageTrayContext : ApplicationContext
         SessionRemainingFraction: ComputeSessionRemainingFraction(),
         SessionNotStarted: SessionNotStarted,
         ShowSessionRing: _showSessionRingItem.Checked,
-        WeeklyPaceFraction: WeeklyPaceFraction);
+        WeeklyPaceFraction: WeeklyPaceFraction,
+        Greyscale: GreyscaleActive);
 
-    /// <summary>Regenerates whichever icon is currently shown with the update badge added
-    /// or removed, for when update availability changes independently of the next usage
-    /// refresh (e.g. the periodic background version check).</summary>
+    /// <summary>Regenerates whichever icon is currently shown, for when something it depends
+    /// on changes independently of the next usage refresh: update availability (e.g. the
+    /// periodic background version check), a display setting, the theme or the palette.</summary>
     private void RedrawIconForCurrentState()
     {
+        var palette = TrayPalette;
         var icon = _currentIconKind switch
         {
-            IconKind.Warning => TrayIconFactory.CreateWarningIcon(HasUpdate),
-            IconKind.Usage => TrayIconFactory.CreateUsageIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction),
-            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(_lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction),
-            _ => TrayIconFactory.CreateUnavailableIcon(HasUpdate),
+            IconKind.Warning => TrayIconFactory.CreateWarningIcon(palette, HasUpdate),
+            IconKind.Usage => TrayIconFactory.CreateUsageIcon(palette, _lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction),
+            IconKind.Refreshing => TrayIconFactory.CreateRefreshingIcon(palette, _lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction),
+            _ => TrayIconFactory.CreateUnavailableIcon(palette, HasUpdate),
         };
         SetIcon(icon);
     }

@@ -16,7 +16,10 @@ namespace AIQuota.StreamDock;
 /// The one addition the extra resolution allows is printing each bar's label and
 /// percentage as one line of text inside the (now much taller) bar itself.
 /// Always dark, since a deck key isn't affected by the Windows taskbar theme - i.e. always
-/// the tray icon's "dark taskbar" color branch.
+/// the dark variant of the <see cref="UsagePalette"/> (standard or, in accessibility mode,
+/// greyscale - see <see cref="DeckStatusSnapshot.Greyscale"/>). In greyscale, a level above
+/// 80% gets a hatched fill, and the text in a bar switches colour where it crosses the fill
+/// edge so it keeps its contrast on both the fill and the track.
 /// </summary>
 internal static class DeckKeyRenderer
 {
@@ -25,12 +28,13 @@ internal static class DeckKeyRenderer
 
     private static readonly Color Background = Color.FromArgb(255, 28, 28, 30);
 
-    /// <summary>The tray icon's bar background colour (dark branch). Also used for the session
-    /// bar outline and the countdown ring while no session has started.</summary>
-    private static readonly Color TrackColor = Color.FromArgb(127, Color.White);
+    /// <summary>Width of the greyscale palette's track outline - thinner than a scaled copy
+    /// of the tray icon's, which would be heavy at key size.</summary>
+    private const float TrackOutlineWidth = 3f;
 
     public static byte[] Render(DeckStatusSnapshot snapshot, DeckKeyStyle style = DeckKeyStyle.Combined)
     {
+        var palette = UsagePalette.For(snapshot.Greyscale, isLight: false);
         using var bitmap = new Bitmap(Size, Size);
         using (var g = Graphics.FromImage(bitmap))
         {
@@ -44,27 +48,27 @@ internal static class DeckKeyRenderer
             }
             else if (snapshot.IsWarning)
             {
-                DrawWarningGlyph(g);
+                DrawWarningGlyph(g, palette);
             }
             else
             {
                 switch (style)
                 {
                     case DeckKeyStyle.Session:
-                        DrawSingleValue(g, "Session", snapshot.SessionPercent, snapshot.SessionNotStarted);
+                        DrawSingleValue(g, palette, "Session", snapshot.SessionPercent, snapshot.SessionNotStarted);
                         if (snapshot.SessionRemainingFraction is { } remaining)
-                            DrawCountdownBlocks(g, remaining, snapshot.SessionNotStarted);
+                            DrawCountdownBlocks(g, palette, remaining, snapshot.SessionNotStarted);
                         break;
                     case DeckKeyStyle.Week:
-                        DrawSingleValue(g, "Week", snapshot.WeeklyPercent, paceFraction: snapshot.WeeklyPaceFraction);
+                        DrawSingleValue(g, palette, "Week", snapshot.WeeklyPercent, paceFraction: snapshot.WeeklyPaceFraction);
                         break;
                     case DeckKeyStyle.Credit:
-                        DrawSingleValue(g, "Credit", snapshot.CreditPercent);
+                        DrawSingleValue(g, palette, "Credit", snapshot.CreditPercent);
                         break;
                     default:
-                        DrawBars(g, snapshot.SessionPercent, snapshot.WeeklyPercent, snapshot.CreditPercent, snapshot.SessionNotStarted, snapshot.WeeklyPaceFraction);
+                        DrawBars(g, palette, snapshot.SessionPercent, snapshot.WeeklyPercent, snapshot.CreditPercent, snapshot.SessionNotStarted, snapshot.WeeklyPaceFraction);
                         if (snapshot.ShowSessionRing && snapshot.SessionRemainingFraction is { } fraction)
-                            DrawSessionRing(g, fraction, snapshot.SessionNotStarted);
+                            DrawSessionRing(g, palette, fraction, snapshot.SessionNotStarted);
                         break;
                 }
 
@@ -98,7 +102,7 @@ internal static class DeckKeyRenderer
     /// the same "session not started" look as the tray icon's session bar. With <paramref
     /// name="paceFraction"/> the weekly pace marker is drawn across the bar, as a horizontal
     /// line since this bar fills upwards.</summary>
-    private static void DrawSingleValue(Graphics g, string title, int? percent, bool outlineOnly = false, double? paceFraction = null)
+    private static void DrawSingleValue(Graphics g, UsagePalette palette, string title, int? percent, bool outlineOnly = false, double? paceFraction = null)
     {
         using (var titleFont = new Font("Segoe UI", 26f, FontStyle.Bold, GraphicsUnit.Pixel))
         using (var titleBrush = new SolidBrush(Color.White))
@@ -112,28 +116,29 @@ internal static class DeckKeyRenderer
             const float outlineWidth = 6f;
             var inset = RectangleF.Inflate(rect, -outlineWidth / 2f, -outlineWidth / 2f);
             using var outlinePath = RoundedRect(inset, SingleValueBarRadius - outlineWidth / 2f);
-            using var outlinePen = new Pen(TrackColor, outlineWidth);
+            using var outlinePen = new Pen(palette.NotStarted, outlineWidth);
             g.DrawPath(outlinePen, outlinePath);
         }
         else
         {
-            using var trackBrush = new SolidBrush(TrackColor);
-            g.FillPath(trackBrush, trackPath);
+            FillTrack(g, palette, rect, SingleValueBarRadius);
         }
 
         var clamped = percent is { } p ? Math.Clamp(p, 0, 100) : 0;
         var fillHeight = rect.Height * clamped / 100f;
+        using var fillArea = new Region(trackPath);
         if (fillHeight > 0)
         {
             // Clipped to the bar's own shape so a low fill still follows its rounded bottom
             // corners instead of being stretched to a minimum height.
             var fillRect = new RectangleF(rect.X, rect.Bottom - fillHeight, rect.Width, fillHeight);
             using var fillPath = RoundedRect(fillRect, Math.Min(SingleValueBarRadius, fillHeight / 2f));
-            using var fillBrush = new SolidBrush(UsagePalette.ColorForPercent(clamped));
-            var previousClip = g.Clip;
-            g.SetClip(trackPath, CombineMode.Intersect);
-            g.FillPath(fillBrush, fillPath);
-            g.Clip = previousClip;
+            fillArea.Intersect(fillPath);
+            FillLevel(g, palette, fillArea, rect, clamped);
+        }
+        else
+        {
+            fillArea.MakeEmpty();
         }
 
         if (paceFraction is { } pace)
@@ -142,14 +147,85 @@ internal static class DeckKeyRenderer
             const float outlineWidth = 3f;
             var y = rect.Bottom - rect.Height * (float)Math.Clamp(pace, 0.0, 1.0);
             y = Math.Clamp(y, rect.Y + coreWidth / 2f, rect.Bottom - coreWidth / 2f);
-            DrawPaceTick(g, trackPath, new RectangleF(rect.X, y - coreWidth / 2f, rect.Width, coreWidth), outlineWidth, rect.Width * 0.14f);
+            DrawPaceTick(g, palette, trackPath, new RectangleF(rect.X, y - coreWidth / 2f, rect.Width, coreWidth), outlineWidth, rect.Width * 0.14f);
         }
 
         var text = percent is null ? "–" : $"{clamped}%";
         using var font = new Font("Segoe UI", 44f, FontStyle.Bold, GraphicsUnit.Pixel);
-        using var textBrush = new SolidBrush(Color.White);
         using var format = new StringFormat(StringFormatFlags.NoWrap) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-        g.DrawString(text, font, textBrush, rect, format);
+        DrawSplitText(g, palette, text, font, rect, format, fillArea, clamped);
+    }
+
+    /// <summary>The empty part of a bar: the track colour, plus - in the greyscale palette -
+    /// an outline that keeps the bar's extent visible against the key background.</summary>
+    private static void FillTrack(Graphics g, UsagePalette palette, RectangleF rect, float radius)
+    {
+        using (var trackPath = RoundedRect(rect, radius))
+        using (var trackBrush = new SolidBrush(palette.Track))
+            g.FillPath(trackBrush, trackPath);
+
+        if (palette.TrackOutline is { } outlineColor)
+        {
+            var inset = RectangleF.Inflate(rect, -TrackOutlineWidth / 2f, -TrackOutlineWidth / 2f);
+            using var outlinePath = RoundedRect(inset, radius - TrackOutlineWidth / 2f);
+            using var outlinePen = new Pen(outlineColor, TrackOutlineWidth);
+            g.DrawPath(outlinePen, outlinePath);
+        }
+    }
+
+    /// <summary>Fills <paramref name="area"/> (the filled part of a bar spanning <paramref
+    /// name="bar"/>) in the colour for <paramref name="percent"/>. In the greyscale palette a
+    /// level above 80% is hatched with diagonal stripes, so it's told apart from the 50-80%
+    /// level by its pattern, not just by brightness.</summary>
+    private static void FillLevel(Graphics g, UsagePalette palette, Region area, RectangleF bar, int percent)
+    {
+        using (var fillBrush = new SolidBrush(palette.ForPercent(percent)))
+            g.FillRegion(fillBrush, area);
+
+        if (!palette.MarksHighLevel || !UsagePalette.IsHigh(percent))
+            return;
+
+        const float stripeWidth = 7f;
+        const float stripeSpacing = 20f;
+        var previousClip = g.Clip;
+        g.SetClip(area, CombineMode.Intersect);
+        using var stripePen = new Pen(palette.HighHatch, stripeWidth);
+        for (var x = bar.X - bar.Height; x < bar.Right + stripeSpacing; x += stripeSpacing)
+            g.DrawLine(stripePen, x, bar.Bottom, x + bar.Height, bar.Y);
+        g.Clip = previousClip;
+    }
+
+    /// <summary>Draws a bar's text in <see cref="UsagePalette.TextOnTrack"/>, and the part of
+    /// it over <paramref name="fillArea"/> in <see cref="UsagePalette.TextOnFill"/> - so in
+    /// the greyscale palette, where the fill is light, each part keeps its contrast. Over a
+    /// hatched fill (<paramref name="percent"/> above 80%) the text also gets a halo in the
+    /// fill's base colour, so the stripes don't run through the letters.</summary>
+    private static void DrawSplitText(Graphics g, UsagePalette palette, string text, Font font, RectangleF rect, StringFormat format, Region fillArea, int percent)
+    {
+        if (palette.TextOnFill == palette.TextOnTrack)
+        {
+            using var brush = new SolidBrush(palette.TextOnTrack);
+            g.DrawString(text, font, brush, rect, format);
+            return;
+        }
+
+        // Drawn as one path, so the two colours and the halo line up exactly at the fill edge.
+        using var textPath = new GraphicsPath();
+        textPath.AddString(text, font.FontFamily, (int)font.Style, font.Size, rect, format);
+
+        using (var trackBrush = new SolidBrush(palette.TextOnTrack))
+            g.FillPath(trackBrush, textPath);
+
+        var previousClip = g.Clip;
+        g.SetClip(fillArea, CombineMode.Intersect);
+        if (palette.MarksHighLevel && UsagePalette.IsHigh(percent))
+        {
+            using var halo = new Pen(palette.High, 6f) { LineJoin = LineJoin.Round };
+            g.DrawPath(halo, textPath);
+        }
+        using (var fillBrush = new SolidBrush(palette.TextOnFill))
+            g.FillPath(fillBrush, textPath);
+        g.Clip = previousClip;
     }
 
     /// <summary>The session countdown as 5 blocks in a row under the Session key's bar, one
@@ -157,14 +233,14 @@ internal static class DeckKeyRenderer
     /// cref="TrayIconFactory"/>): a solid block per full hour left, the block of the hour
     /// currently ticking away shrinks from the right, elapsed hours aren't drawn at all, and
     /// before a session starts all 5 are drawn in the dimmed track colour.</summary>
-    private static void DrawCountdownBlocks(Graphics g, double remainingFraction, bool notStarted)
+    private static void DrawCountdownBlocks(Graphics g, UsagePalette palette, double remainingFraction, bool notStarted)
     {
         const int blockCount = 5;
         const float radius = 3f;
         var blockWidth = (CountdownRow.Width - CountdownGap * (blockCount - 1)) / blockCount;
         var hoursLeft = Math.Clamp(remainingFraction, 0.0, 1.0) * blockCount;
 
-        using var brush = new SolidBrush(notStarted ? TrackColor : Color.FromArgb(235, Color.White));
+        using var brush = new SolidBrush(notStarted ? palette.NotStarted : palette.Ring);
         for (var i = 0; i < blockCount; i++)
         {
             var filled = (float)Math.Clamp(hoursLeft - i, 0.0, 1.0);
@@ -182,18 +258,18 @@ internal static class DeckKeyRenderer
     /// when a credit percentage is available, stacked in the middle of the icon inset far
     /// enough to leave room for the session countdown ring - including the week bar's pace
     /// marker when <paramref name="weeklyPaceFraction"/> is set.</summary>
-    private static void DrawBars(Graphics g, int sessionPercent, int weeklyPercent, int? creditPercent, bool sessionNotStarted, double? weeklyPaceFraction)
+    private static void DrawBars(Graphics g, UsagePalette palette, int sessionPercent, int weeklyPercent, int? creditPercent, bool sessionNotStarted, double? weeklyPaceFraction)
     {
         if (creditPercent is { } credit)
         {
-            DrawBar(g, "Session", sessionPercent, new RectangleF(4 * Scale, 4 * Scale, (Size - 8 * Scale), 7 * Scale), sessionNotStarted);
-            DrawBar(g, "Week", weeklyPercent, new RectangleF(4 * Scale, 12 * Scale, (Size - 8 * Scale), 7 * Scale), paceFraction: weeklyPaceFraction);
-            DrawBar(g, "Credit", credit, new RectangleF(4 * Scale, 20 * Scale, (Size - 8 * Scale), 7 * Scale));
+            DrawBar(g, palette, "Session", sessionPercent, new RectangleF(4 * Scale, 4 * Scale, (Size - 8 * Scale), 7 * Scale), sessionNotStarted);
+            DrawBar(g, palette, "Week", weeklyPercent, new RectangleF(4 * Scale, 12 * Scale, (Size - 8 * Scale), 7 * Scale), paceFraction: weeklyPaceFraction);
+            DrawBar(g, palette, "Credit", credit, new RectangleF(4 * Scale, 20 * Scale, (Size - 8 * Scale), 7 * Scale));
         }
         else
         {
-            DrawBar(g, "Session", sessionPercent, new RectangleF(4 * Scale, 4 * Scale, (Size - 8 * Scale), 11 * Scale), sessionNotStarted);
-            DrawBar(g, "Week", weeklyPercent, new RectangleF(4 * Scale, 17 * Scale, (Size - 8 * Scale), 11 * Scale), paceFraction: weeklyPaceFraction);
+            DrawBar(g, palette, "Session", sessionPercent, new RectangleF(4 * Scale, 4 * Scale, (Size - 8 * Scale), 11 * Scale), sessionNotStarted);
+            DrawBar(g, palette, "Week", weeklyPercent, new RectangleF(4 * Scale, 17 * Scale, (Size - 8 * Scale), 11 * Scale), paceFraction: weeklyPaceFraction);
         }
     }
 
@@ -203,7 +279,7 @@ internal static class DeckKeyRenderer
     /// percentage as one centered line ("Session 45%"). With <paramref name="paceFraction"/>
     /// the weekly pace marker is drawn too, as notches above and below that text line (see
     /// <see cref="DrawPaceTick"/>).</summary>
-    private static void DrawBar(Graphics g, string label, int percent, RectangleF rect, bool outlineOnly = false, double? paceFraction = null)
+    private static void DrawBar(Graphics g, UsagePalette palette, string label, int percent, RectangleF rect, bool outlineOnly = false, double? paceFraction = null)
     {
         var clamped = Math.Clamp(percent, 0, 100);
         var radius = Math.Min(4f * Scale, rect.Height / 2f);
@@ -213,23 +289,23 @@ internal static class DeckKeyRenderer
             const float outlineWidth = 2f * Scale;
             var inset = RectangleF.Inflate(rect, -outlineWidth / 2f, -outlineWidth / 2f);
             using var outlinePath = RoundedRect(inset, radius - outlineWidth / 2f);
-            using var outlinePen = new Pen(TrackColor, outlineWidth);
+            using var outlinePen = new Pen(palette.NotStarted, outlineWidth);
             g.DrawPath(outlinePen, outlinePath);
         }
         else
         {
-            using var trackPath = RoundedRect(rect, radius);
-            using var trackBrush = new SolidBrush(TrackColor);
-            g.FillPath(trackBrush, trackPath);
+            FillTrack(g, palette, rect, radius);
         }
 
         var fillWidth = Math.Max(rect.Width * clamped / 100f, clamped > 0 ? 6f * Scale : 0f);
+        using var fillArea = new Region();
+        fillArea.MakeEmpty();
         if (fillWidth > 0)
         {
             var fillRect = new RectangleF(rect.X, rect.Y, Math.Min(fillWidth, rect.Width), rect.Height);
             using var fillPath = RoundedRect(fillRect, radius);
-            using var fillBrush = new SolidBrush(UsagePalette.ColorForPercent(clamped));
-            g.FillPath(fillBrush, fillPath);
+            fillArea.Union(fillPath);
+            FillLevel(g, palette, fillArea, rect, clamped);
         }
 
         if (paceFraction is { } pace)
@@ -239,16 +315,15 @@ internal static class DeckKeyRenderer
             var x = rect.X + rect.Width * (float)Math.Clamp(pace, 0.0, 1.0);
             x = Math.Clamp(x, rect.X + coreWidth / 2f, rect.Right - coreWidth / 2f);
             using var barPath = RoundedRect(rect, radius);
-            DrawPaceTick(g, barPath, new RectangleF(x - coreWidth / 2f, rect.Y, coreWidth, rect.Height), outlineWidth, rect.Height * 0.28f);
+            DrawPaceTick(g, palette, barPath, new RectangleF(x - coreWidth / 2f, rect.Y, coreWidth, rect.Height), outlineWidth, rect.Height * 0.28f);
         }
 
         using var format = new StringFormat(StringFormatFlags.NoWrap) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         using var font = new Font("Segoe UI", FitFontSize(g, rect, format), FontStyle.Bold, GraphicsUnit.Pixel);
-        using var textBrush = new SolidBrush(Color.White);
-        g.DrawString($"{label} {clamped}%", font, textBrush, rect, format);
+        DrawSplitText(g, palette, $"{label} {clamped}%", font, rect, format, fillArea, clamped);
     }
 
-    /// <summary>Mirrors <see cref="TrayIconFactory"/>'s pace marker ("dark taskbar" branch): a
+    /// <summary>Mirrors <see cref="TrayIconFactory"/>'s pace marker (dark palette): a
     /// white tick with a dark outline of <paramref name="outlineWidth"/>, clipped to the bar's
     /// rounded shape (<paramref name="barPath"/>). Unlike the tray icon, which has no text in
     /// its bars, the tick isn't drawn across the whole bar - which would run straight through
@@ -257,7 +332,7 @@ internal static class DeckKeyRenderer
     /// text in the middle clear. Works for both the horizontal bars (vertical tick, notches at
     /// top and bottom) and the Week key's upward-filling bar (horizontal tick, notches at the
     /// left and right edges).</summary>
-    private static void DrawPaceTick(Graphics g, GraphicsPath barPath, RectangleF core, float outlineWidth, float notchLength)
+    private static void DrawPaceTick(Graphics g, UsagePalette palette, GraphicsPath barPath, RectangleF core, float outlineWidth, float notchLength)
     {
         var vertical = core.Width < core.Height;
         RectangleF[] notches = vertical
@@ -266,8 +341,8 @@ internal static class DeckKeyRenderer
 
         var previousClip = g.Clip;
         g.SetClip(barPath, CombineMode.Intersect);
-        using var outlineBrush = new SolidBrush(Color.FromArgb(230, 20, 20, 20));
-        using var coreBrush = new SolidBrush(Color.FromArgb(235, Color.White));
+        using var outlineBrush = new SolidBrush(palette.PaceOutline);
+        using var coreBrush = new SolidBrush(palette.PaceCore);
         foreach (var notch in notches)
         {
             // Outlined on all sides; the outer end is cut off again by the bar's clip.
@@ -293,9 +368,9 @@ internal static class DeckKeyRenderer
 
     /// <summary>Exact copy of <see cref="TrayIconFactory"/>'s countdown ring - a gapped,
     /// 5-segment outline tracing a rounded square, clockwise from top-center - scaled up;
-    /// see that method for the full rationale. Always the "dark taskbar" (white) colour
-    /// branch, since a deck key has no taskbar theme to match.</summary>
-    private static void DrawSessionRing(Graphics g, double remainingFraction, bool notStarted)
+    /// see that method for the full rationale. Always the dark palette, since a deck key has
+    /// no taskbar theme to match.</summary>
+    private static void DrawSessionRing(Graphics g, UsagePalette palette, double remainingFraction, bool notStarted)
     {
         const float penWidth = 2.4f * Scale;
         const float radius = 8f * Scale;
@@ -312,7 +387,7 @@ internal static class DeckKeyRenderer
         var segmentLength = totalLength / segmentCount;
         var targetLength = totalLength * (float)Math.Clamp(remainingFraction, 0.0, 1.0);
 
-        using var fillPen = new Pen(notStarted ? TrackColor :Color.FromArgb(235, Color.White), penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var fillPen = new Pen(notStarted ? palette.NotStarted : palette.Ring, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round };
 
         for (var i = 0; i < segmentCount; i++)
         {
@@ -421,11 +496,11 @@ internal static class DeckKeyRenderer
         g.DrawString("?", font, textBrush, (Size - textSize.Width) / 2f, (Size - textSize.Height) / 2f);
     }
 
-    /// <summary>Mirrors <see cref="TrayIconFactory.CreateWarningIcon"/>: an orange warning
-    /// triangle with a "!" centered in it.</summary>
-    private static void DrawWarningGlyph(Graphics g)
+    /// <summary>Mirrors <see cref="TrayIconFactory.CreateWarningIcon"/>: a warning triangle
+    /// with a "!" centered in it - orange, or in the greyscale palette black with a white
+    /// outline and a white "!".</summary>
+    private static void DrawWarningGlyph(Graphics g, UsagePalette palette)
     {
-        var color = Color.FromArgb(240, 170, 60);
         using var trianglePath = new GraphicsPath();
         trianglePath.AddPolygon([
             new PointF(Size / 2f, 3f * Scale),
@@ -434,10 +509,15 @@ internal static class DeckKeyRenderer
         ]);
         trianglePath.CloseFigure();
 
-        using (var brush = new SolidBrush(color))
+        using (var brush = new SolidBrush(palette.WarningFill))
             g.FillPath(brush, trianglePath);
+        if (palette.WarningOutline is { } outline)
+        {
+            using var outlinePen = new Pen(outline, 2f * Scale) { LineJoin = LineJoin.Round };
+            g.DrawPath(outlinePen, trianglePath);
+        }
 
-        using var textBrush = new SolidBrush(Color.FromArgb(230, 40, 30, 0));
+        using var textBrush = new SolidBrush(palette.WarningGlyph);
         using var font = new Font("Segoe UI", 15f * Scale, FontStyle.Bold, GraphicsUnit.Pixel);
         var textSize = g.MeasureString("!", font);
         g.DrawString("!", font, textBrush,
