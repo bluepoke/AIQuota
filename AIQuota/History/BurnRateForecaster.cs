@@ -98,11 +98,13 @@ public static class BurnRateForecaster
         if (ratePerMinute <= 0)
             return UsageForecast.None;
 
-        var limitAt = latest.Time + TimeSpan.FromMinutes((100 - latest.Percent) / ratePerMinute);
-        if (limitAt >= resetsAt)
+        // Compare in minutes before building a TimeSpan: a near-flat fit can yield a tiny positive
+        // slope (e.g. 1e-15 from rounding), whose minutes-to-limit overflow TimeSpan.
+        var minutesToLimit = (100 - latest.Percent) / ratePerMinute;
+        if (minutesToLimit >= (resetsAt - latest.Time).TotalMinutes)
             return new UsageForecast(ForecastKind.ResetFirst);
 
-        var timeToLimit = limitAt - now;
+        var timeToLimit = latest.Time + TimeSpan.FromMinutes(minutesToLimit) - now;
         return new UsageForecast(ForecastKind.Limit, timeToLimit < TimeSpan.FromMinutes(1) ? TimeSpan.FromMinutes(1) : timeToLimit);
     }
 
