@@ -12,6 +12,10 @@ internal enum UsageAlert
 
     /// <summary>At the current rate, the session is about to hit its limit.</summary>
     SessionForecast,
+
+    /// <summary>An additional limit (e.g. a model's weekly limit) crossed the warning
+    /// threshold; each limit has its own notification, identified by its key.</summary>
+    AdditionalLimit,
 }
 
 /// <summary>What the user chose on a notification, handled by <see cref="UsageTrayContext"/>.</summary>
@@ -35,7 +39,9 @@ internal interface INotifier
 {
     /// <param name="expiresAt">When the notification is out of date (the window resets) and
     /// may be removed from the notification center; null keeps it.</param>
-    void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt);
+    /// <param name="limitKey">For <see cref="UsageAlert.AdditionalLimit"/>: which limit, so
+    /// each one replaces only its own previous notification.</param>
+    void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt, string? limitKey = null);
 
     void ShowNewVersion(string version);
 }

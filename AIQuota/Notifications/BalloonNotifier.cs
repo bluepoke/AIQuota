@@ -28,7 +28,7 @@ internal sealed class BalloonNotifier : INotifier
             _onAction(_lastWasNewVersion ? NotificationAction.Install : NotificationAction.OpenFlyout);
     }
 
-    public void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt)
+    public void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt, string? limitKey = null)
     {
         _lastWasNewVersion = false;
         _notifyIcon.ShowBalloonTip(TimeoutMs, Strings.AppTitle, text, ToolTipIcon.Warning);

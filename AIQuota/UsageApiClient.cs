@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using AIQuota.Auth;
 using AIQuota.Localization;
@@ -30,7 +31,11 @@ public sealed record UsageSpend(
 public sealed record UsageApiResponse(
     [property: JsonPropertyName("five_hour")] UsageWindow? FiveHour,
     [property: JsonPropertyName("seven_day")] UsageWindow? SevenDay,
-    [property: JsonPropertyName("spend")] UsageSpend? Spend);
+    [property: JsonPropertyName("spend")] UsageSpend? Spend,
+    // Kept as raw JSON and read tolerantly by UsageLimitParser, so a change in their shape
+    // can't fail the whole fetch.
+    [property: JsonPropertyName("limits")] JsonElement? Limits = null,
+    [property: JsonPropertyName("weekly_scoped_shares")] JsonElement? WeeklyScopedShares = null);
 
 public sealed record UsageSnapshot(
     int SessionPercent,
@@ -42,7 +47,8 @@ public sealed record UsageSnapshot(
     decimal? CreditLimit = null,
     string? CreditCurrency = null,
     double? SessionUtilization = null,
-    double? WeeklyUtilization = null);
+    double? WeeklyUtilization = null,
+    IReadOnlyList<UsageLimitInfo>? AdditionalLimits = null);
 
 /// <summary>The signed-in account, from the profile endpoint.</summary>
 /// <param name="Id">Stable identifier (the account UUID, else the email) - keys the local
@@ -101,7 +107,8 @@ public sealed class UsageApiClient(OAuthClient oauth)
                 spend?.limit.Value,
                 spend?.used.Currency,
                 data.FiveHour is { } fiveHour ? Math.Clamp(fiveHour.Utilization, 0, 100) : null,
-                data.SevenDay is { } sevenDay ? Math.Clamp(sevenDay.Utilization, 0, 100) : null);
+                data.SevenDay is { } sevenDay ? Math.Clamp(sevenDay.Utilization, 0, 100) : null,
+                UsageLimitParser.ParseAdditional(data.Limits, data.WeeklyScopedShares));
 
             return new UsageFetchResult(UsageFetchStatus.Ok, snapshot);
         }

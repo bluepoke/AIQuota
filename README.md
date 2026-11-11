@@ -32,7 +32,8 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 ![Tooltip showing session, week, and credits usage](screenshots/claude_usage_tooltip.png)
 
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
-a burn-rate forecast, usage credit balance (used/limit, when available), manual refresh,
+a burn-rate forecast, [additional limits](#additional-limits) such as a model's weekly
+limit, usage credit balance (used/limit, when available), manual refresh,
 login/logout, usage history export/clear, run-at-startup toggle, a session countdown ring
 toggle, a weekly pace marker toggle, an accessibility mode toggle, a Stream Dock controller toggle, a
 check-for-new-version toggle, and a language switch (German/English):
@@ -54,6 +55,8 @@ flyouts. It shows:
 - the [burn-rate forecast](#usage-history-and-forecast) under the session and week bars,
   and as a dimmed, hatched extension of each bar up to the usage you'd reach by the reset
   at your current rate
+- a bar for each [additional limit](#additional-limits) your account has, e.g. a weekly
+  limit for one model
 - a chart of your weekly usage over the **last 7 days**
 
 <p>
@@ -98,6 +101,7 @@ Usage warnings and the new-version notice are Windows notifications with buttons
 |---|---|---|
 | Session at 90% or more | `Session usage (5h) at 92% · resets 14:30` | **Open usage page**, **Dismiss** |
 | Week at 90% or more | `Weekly usage at 90% · resets Mon 09:00` | **Open usage page**, **Dismiss** |
+| [Additional limit](#additional-limits) at 90% or more | `Week · Opus at 91% · resets Mon 09:00` | **Open usage page**, **Dismiss** |
 | Session limit forecast | `Session limit (5h) in ~25min at current rate` | **Open usage page**, **Dismiss** |
 | New version | `AI Quota v1.5.0 is available` | **Install…**, **Later** |
 
@@ -180,6 +184,23 @@ new version available, it can reach Windows' 127-character limit), it leaves out
 It can be turned off under **Settings → Show weekly pace marker**, which also removes the
 pace value from the tooltip and the menu, and both pace markers from the
 [flyout](#tray-flyout).
+
+### Additional limits
+
+Besides the 5-hour session and the overall week, an account can have further limits, e.g. a
+separate weekly limit for one model. AI Quota shows every limit the usage endpoint reports,
+without a fixed list of which ones exist, so new limits appear without an app update:
+
+- **Flyout**: a bar of its own for each, with its name (e.g. `Week · Opus`), percentage and
+  reset time. Limits of the 5-hour window go under the session bar, all others under the
+  week bar. When a limit may only use part of the weekly allowance, a line says so
+  (`Can use up to 50% of the weekly limit`).
+- **Right-click menu**: a line for each, e.g. `Week · Opus: 41% (until Sunday 08:00, in 3d14h)`.
+- **Notifications**: the 90% [warning](#notifications) applies to each of them as well.
+
+The tray icon and the tooltip keep showing the session and the overall week only. Names
+come from the API: known windows are translated (`Week`, `Session (5h)`), and what a limit
+is scoped to (e.g. the model name) is shown as reported.
 
 ### Usage history and forecast
 

@@ -261,6 +261,30 @@ public static class Strings
     public static string WeeklyLabel(int percent, string resetSuffix) =>
         T($"Woche: {percent}%{resetSuffix}", $"Week: {percent}%{resetSuffix}");
 
+    /// <summary>Name of an additional limit (see <see cref="UsageLimitInfo"/>): its window
+    /// plus what it's scoped to, e.g. "Week · Opus"; an unknown window's name is built from
+    /// the API's group name.</summary>
+    public static string LimitLabel(UsageLimitInfo limit)
+    {
+        var window = limit.Group.ToLowerInvariant() switch
+        {
+            "session" => FlyoutSessionTitle,
+            "weekly" => FlyoutWeekTitle,
+            _ => UsageLimitParser.TitleCase(limit.Group),
+        };
+        return limit.Name is { } name ? $"{window} · {name}" : window;
+    }
+
+    /// <summary>Context menu line of an additional limit, e.g. "Week · Opus: 41% (until …)".</summary>
+    public static string LimitMenuLabel(UsageLimitInfo limit) =>
+        $"{LimitLabel(limit)}: {limit.RoundedPercent}%{FormatReset(limit.ResetsAt)}";
+
+    /// <summary>Line under an additional limit's reset time in the flyout when it may only use
+    /// part of the weekly allowance.</summary>
+    public static string LimitAllowanceLine(double sharePercent) => T(
+        $"Darf bis zu {Math.Round(sharePercent):0}% des Wochenlimits nutzen",
+        $"Can use up to {Math.Round(sharePercent):0}% of the weekly limit");
+
     /// <summary>Appended to a usage line with its pace (e.g. " · pace 43%"): the week in the
     /// tooltip, context menu and flyout, the session in the flyout. Empty when there's no
     /// pace to show.</summary>
@@ -311,6 +335,11 @@ public static class Strings
     /// <summary>"Weekly usage at 90% · resets Mon 09:00".</summary>
     public static string NotificationWeeklyWarning(int percent, DateTimeOffset? resetsAt) =>
         T($"Wochennutzung bei {percent}%", $"Weekly usage at {percent}%") + NotificationResetSuffix(resetsAt);
+
+    /// <summary>"Week · Opus at 91% · resets Mon 09:00".</summary>
+    public static string NotificationLimitWarning(UsageLimitInfo limit) =>
+        T($"{LimitLabel(limit)} bei {limit.RoundedPercent}%", $"{LimitLabel(limit)} at {limit.RoundedPercent}%")
+        + NotificationResetSuffix(limit.ResetsAt);
 
     public static string NotificationSessionForecast(TimeSpan timeToLimit) => T(
         $"Sitzungslimit (5h) in ~{FormatDuration(timeToLimit)} beim aktuellen Verbrauch",

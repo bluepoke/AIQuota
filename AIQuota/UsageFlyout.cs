@@ -465,6 +465,7 @@ internal sealed class UsageFlyout : Form
         y += S(18f);
         y = DrawForecast(g, _state.SessionForecast, left, y, width);
         y += S(14f);
+        y = DrawAdditionalLimits(g, snapshot, sessionGroup: true, left, y, width, now);
 
         // Week
         double? pace = snapshot.WeeklyResetsAt is { } weekReset ? UsageWindows.WeeklyPaceFraction(weekReset, now) : null;
@@ -482,6 +483,7 @@ internal sealed class UsageFlyout : Form
         }
         y = DrawForecast(g, _state.WeeklyForecast, left, y, width);
         y += S(14f);
+        y = DrawAdditionalLimits(g, snapshot, sessionGroup: false, left, y, width, now);
 
         // Credits
         if (_state.CreditPercent is { } creditPercent &&
@@ -502,6 +504,39 @@ internal sealed class UsageFlyout : Form
         y += S(ChartHeight) + S(4f) + S(14f);
 
         return y + S(Pad);
+    }
+
+    /// <summary>The additional limits the account reports (e.g. a model's weekly limit, see
+    /// <see cref="UsageLimitInfo"/>), each as its own section like the session and week: name
+    /// and percentage, a bar (same colours and scale ticks, no pace marker or projection -
+    /// there's no history for them) and the reset time, plus how much of the weekly allowance
+    /// it may use when the API says so. Those of the session window go under the session,
+    /// all others under the week, sorted by name.</summary>
+    private float DrawAdditionalLimits(Graphics? g, UsageSnapshot snapshot, bool sessionGroup, float left, float y, float width, DateTimeOffset now)
+    {
+        var limits = (snapshot.AdditionalLimits ?? [])
+            .Where(l => l.IsSessionGroup == sessionGroup)
+            .OrderBy(Strings.LimitLabel, StringComparer.CurrentCultureIgnoreCase);
+
+        foreach (var limit in limits)
+        {
+            y = DrawTitleRow(g, Strings.LimitLabel(limit), $"{limit.RoundedPercent}%", left, y, width);
+            DrawBar(g, new RectangleF(left, y, width, S(8f)), limit.RoundedPercent, outlineOnly: false, paceFraction: null);
+            y += S(8f) + S(6f);
+
+            if (limit.ResetsAt is { } reset)
+            {
+                DrawText(g, Strings.FlyoutResetLine(reset, now), _bodyFont, _palette.Secondary, new RectangleF(left, y, width, S(18f)));
+                y += S(18f);
+            }
+            if (limit.AllowanceShareOfWeekly is { } share)
+            {
+                DrawText(g, Strings.LimitAllowanceLine(share), _bodyFont, _palette.Secondary, new RectangleF(left, y, width, S(18f)));
+                y += S(18f);
+            }
+            y += S(14f);
+        }
+        return y;
     }
 
     private float DrawTitleRow(Graphics? g, string title, string value, float left, float y, float width)

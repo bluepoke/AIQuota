@@ -67,12 +67,13 @@ internal sealed class ToastNotifier : INotifier
         }
     }
 
-    public void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt)
+    public void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt, string? limitKey = null)
     {
         var tag = alert switch
         {
             UsageAlert.Session => "session",
             UsageAlert.Weekly => "weekly",
+            UsageAlert.AdditionalLimit => LimitTag(limitKey),
             _ => "forecast",
         };
 
@@ -82,7 +83,18 @@ internal sealed class ToastNotifier : INotifier
                 .AddText(text)
                 .AddButton(new ToastButton().SetContent(Strings.ToastOpenUsagePage).AddArgument(ActionKey, OpenUsagePageAction))
                 .AddButton(new ToastButtonDismiss(Strings.ToastDismiss)),
-            () => _fallback.ShowUsageAlert(alert, text, expiresAt));
+            () => _fallback.ShowUsageAlert(alert, text, expiresAt, limitKey));
+    }
+
+    /// <summary>Toast tags are limited to 64 characters; a limit's key is made of API names,
+    /// so it's shortened to a stable hash when it doesn't fit.</summary>
+    private static string LimitTag(string? limitKey)
+    {
+        var tag = "limit-" + (limitKey ?? "");
+        if (tag.Length <= 64)
+            return tag;
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(limitKey!)));
+        return "limit-" + hash[..32];
     }
 
     public void ShowNewVersion(string version)

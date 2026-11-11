@@ -70,6 +70,13 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private bool _sessionWarningShown;
     private bool _weeklyWarningShown;
+
+    /// <summary>Keys of the additional limits (<see cref="UsageLimitInfo"/>) whose warning
+    /// has been shown, until they drop below the threshold again.</summary>
+    private readonly HashSet<string> _limitWarningsShown = [];
+
+    /// <summary>Context menu lines of the additional limits, rebuilt on every refresh.</summary>
+    private readonly List<ToolStripMenuItem> _limitItems = [];
     private bool _sessionForecastWarningShown;
     private bool _refreshInProgress;
     private bool _newVersionCheckInProgress;
@@ -684,6 +691,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _sessionItem.Text = Strings.MenuSessionEmpty;
                 _weeklyItem.Text = Strings.MenuWeeklyEmpty;
                 _creditsItem.Visible = false;
+                ApplyLimitMenuItems([]);
                 _statusItem.Text = Strings.StatusPromptLogin;
                 UpdateLoginMenuState();
                 return;
@@ -700,6 +708,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 _lastWeeklyResetsAt = null;
                 _lastUsageSnapshot = null;
                 _creditsItem.Visible = false;
+                ApplyLimitMenuItems([]);
                 _statusItem.Text = Strings.StatusPleaseReauth;
                 UpdateLoginMenuState();
                 return;
@@ -746,9 +755,40 @@ public sealed class UsageTrayContext : ApplicationContext
             _creditsItem.Visible = false;
         }
 
+        ApplyLimitMenuItems(snapshot.AdditionalLimits ?? []);
+
         _statusItem.Text = Strings.StatusUpdated(snapshot.FetchedAt);
 
         MaybeWarn(snapshot);
+    }
+
+    /// <summary>One disabled menu line per additional limit (e.g. a model's weekly limit):
+    /// limits of the session window right under the session entries, all others under the
+    /// week entries, each group sorted by name. Replaces the lines of the previous refresh,
+    /// so a limit that's no longer reported disappears.</summary>
+    private void ApplyLimitMenuItems(IReadOnlyList<UsageLimitInfo> limits)
+    {
+        var menu = _notifyIcon.ContextMenuStrip!;
+        foreach (var item in _limitItems)
+        {
+            menu.Items.Remove(item);
+            item.Dispose();
+        }
+        _limitItems.Clear();
+
+        void InsertAfter(ToolStripItem anchor, IEnumerable<UsageLimitInfo> group)
+        {
+            var index = menu.Items.IndexOf(anchor);
+            foreach (var limit in group.OrderBy(Strings.LimitLabel, StringComparer.CurrentCultureIgnoreCase))
+            {
+                var item = new ToolStripMenuItem(Strings.LimitMenuLabel(limit)) { Enabled = false };
+                menu.Items.Insert(++index, item);
+                _limitItems.Add(item);
+            }
+        }
+
+        InsertAfter(_sessionForecastItem, limits.Where(l => l.IsSessionGroup));
+        InsertAfter(_weeklyForecastItem, limits.Where(l => !l.IsSessionGroup));
     }
 
     /// <summary>Recomputes the session and week burn-rate forecasts from the history (which
@@ -938,6 +978,23 @@ public sealed class UsageTrayContext : ApplicationContext
         else if (snapshot.WeeklyPercent < WarnThresholdPercent)
         {
             _weeklyWarningShown = false;
+        }
+
+        // Additional limits: once per limit, until it drops below the threshold again (or
+        // is no longer reported).
+        var limits = snapshot.AdditionalLimits ?? [];
+        _limitWarningsShown.IntersectWith(limits.Select(l => l.Key));
+        foreach (var limit in limits)
+        {
+            if (limit.RoundedPercent >= WarnThresholdPercent)
+            {
+                if (_limitWarningsShown.Add(limit.Key))
+                    _notifier.ShowUsageAlert(UsageAlert.AdditionalLimit, Strings.NotificationLimitWarning(limit), limit.ResetsAt, limit.Key);
+            }
+            else
+            {
+                _limitWarningsShown.Remove(limit.Key);
+            }
         }
 
         if (_sessionForecast.LimitIn is { } limitIn && limitIn <= ForecastWarnWithin)

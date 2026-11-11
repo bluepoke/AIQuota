@@ -198,7 +198,9 @@ var history = new List<UsageHistoryRecord>();
 }
 var weekNow = history[^1].Week;
 var snapshot = new UsageSnapshot(72, (int)Math.Round(weekNow), sessionReset, weeklyReset, now - TimeSpan.FromMinutes(2),
-    12.34m, 50m, "EUR", 72.3, weekNow);
+    12.34m, 50m, "EUR", 72.3, weekNow,
+    // A model-specific weekly limit, as the API reports it in its "limits" list.
+    [new UsageLimitInfo("weekly_scoped:opus", "weekly", "Opus", 41, weeklyReset, 50)]);
 double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) * 100;
 
 // ------------------------------------------------------------------ context menu
@@ -217,6 +219,8 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
     menu.Items.Add(Item(Strings.ForecastLimitIn(TimeSpan.FromMinutes(38)), false));
     menu.Items.Add(Item(Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(weeklyReset)) + Strings.PaceSuffix((int)Math.Round(WeeklyPacePercent())), false));
     menu.Items.Add(Item(Strings.ForecastResetFirst, false));
+    foreach (var limit in snapshot.AdditionalLimits!)
+        menu.Items.Add(Item(Strings.LimitMenuLabel(limit), false));
     menu.Items.Add(Item(Strings.CreditsLabel(12.34m, 50m, "EUR"), false));
     menu.Items.Add(Item(Strings.StatusUpdated(snapshot.FetchedAt), false));
     menu.Items.Add(new ToolStripSeparator());
