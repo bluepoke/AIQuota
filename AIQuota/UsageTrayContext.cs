@@ -61,7 +61,9 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _settingsMenu;
     private readonly ToolStripMenuItem _aboutMenu;
     private readonly ToolStripMenuItem _historyMenu;
+    private readonly ToolStripMenuItem _historyHeatmapItem;
     private readonly ToolStripMenuItem _historyExportItem;
+    private readonly ToolStripMenuItem _historyExportDailyItem;
     private readonly ToolStripMenuItem _historyClearItem;
 
     private readonly IUsageHistory _history = new JsonlUsageHistory();
@@ -69,6 +71,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private StreamDockBridge? _streamDockBridge;
     private UsageFlyout? _flyout;
     private MiniDashboard? _miniDashboard;
+    private UsageHeatmap? _heatmap;
     private readonly MiniDashboardSettings _miniDashboardSettings = MiniDashboardSettings.Load();
 
     private bool _sessionWarningShown;
@@ -198,12 +201,19 @@ public sealed class UsageTrayContext : ApplicationContext
         _aboutMenu.DropDownItems.Add(_githubItem);
         _aboutMenu.DropDownItems.Add(_versionItem);
 
+        _historyHeatmapItem = new ToolStripMenuItem();
+        _historyHeatmapItem.Click += (_, _) => ShowHeatmap();
         _historyExportItem = new ToolStripMenuItem();
         _historyExportItem.Click += OnExportHistoryClicked;
+        _historyExportDailyItem = new ToolStripMenuItem();
+        _historyExportDailyItem.Click += OnExportDailyClicked;
         _historyClearItem = new ToolStripMenuItem();
         _historyClearItem.Click += OnClearHistoryClicked;
         _historyMenu = new ToolStripMenuItem();
+        _historyMenu.DropDownItems.Add(_historyHeatmapItem);
+        _historyMenu.DropDownItems.Add(new ToolStripSeparator());
         _historyMenu.DropDownItems.Add(_historyExportItem);
+        _historyMenu.DropDownItems.Add(_historyExportDailyItem);
         _historyMenu.DropDownItems.Add(_historyClearItem);
 
         var menu = new ContextMenuStrip();
@@ -293,7 +303,9 @@ public sealed class UsageTrayContext : ApplicationContext
         _settingsMenu.Text = Strings.MenuSettings;
         _aboutMenu.Text = Strings.MenuAbout;
         _historyMenu.Text = Strings.MenuHistory;
+        _historyHeatmapItem.Text = Strings.MenuHistoryHeatmap;
         _historyExportItem.Text = Strings.MenuHistoryExport;
+        _historyExportDailyItem.Text = Strings.MenuHistoryExportDaily;
         _historyClearItem.Text = Strings.MenuHistoryClear;
         ApplyForecastMenuTexts();
         SetNotifyIconText(Strings.TooltipNotLoggedIn);
@@ -379,6 +391,56 @@ public sealed class UsageTrayContext : ApplicationContext
         }
     }
 
+    private void OnExportDailyClicked(object? sender, EventArgs e)
+    {
+        var days = _history.DailyUsage;
+        if (days.Count == 0)
+        {
+            MessageBox.Show(Strings.HistoryEmpty, Strings.AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dialog = new SaveFileDialog
+        {
+            Title = Strings.HistoryExportDailyDialogTitle,
+            Filter = Strings.HistoryCsvFilter,
+            DefaultExt = "csv",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = $"AIQuota-daily-{DateTime.Now:yyyy-MM-dd}.csv",
+        };
+        if (dialog.ShowDialog() != DialogResult.OK)
+            return;
+
+        try
+        {
+            UsageHistoryCsv.WriteDaily(dialog.FileName, days);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(Strings.HistoryExportFailed(ex.Message), Strings.AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>Opens the yearly heatmap (see <see cref="UsageHeatmap"/>), or brings it to
+    /// the front. It's disposed when closed and created anew the next time.</summary>
+    private void ShowHeatmap()
+    {
+        if (_heatmap is null || _heatmap.IsDisposed)
+        {
+            _heatmap = new UsageHeatmap(BuildHeatmapState);
+            // A closed modeless form disposes itself.
+            _heatmap.FormClosed += (_, _) => _heatmap = null;
+        }
+        _heatmap.ShowHeatmap();
+    }
+
+    private HeatmapState BuildHeatmapState() => new(
+        Days: _history.DailyUsage,
+        LoggedIn: _oauth.IsLoggedIn,
+        AccountLabel: _cachedAccountName,
+        Greyscale: GreyscaleActive);
+
     private void OnClearHistoryClicked(object? sender, EventArgs e)
     {
         var answer = MessageBox.Show(Strings.ConfirmClearHistory, Strings.AppTitle,
@@ -422,7 +484,7 @@ public sealed class UsageTrayContext : ApplicationContext
         Flyout.Toggle(Cursor.Position);
     }
 
-    private UsageFlyout Flyout => _flyout ??= new UsageFlyout(BuildFlyoutState, RefreshAsync, ShowMiniDashboard);
+    private UsageFlyout Flyout => _flyout ??= new UsageFlyout(BuildFlyoutState, RefreshAsync, ShowMiniDashboard, ShowHeatmap);
 
     /// <summary>Shows the mini dashboard (see <see cref="MiniDashboard"/>) and remembers that
     /// it's open, so it reopens on the next start.</summary>
@@ -494,6 +556,7 @@ public sealed class UsageTrayContext : ApplicationContext
     {
         _flyout?.UpdateState();
         _miniDashboard?.UpdateState();
+        _heatmap?.UpdateState();
     }
 
     private FlyoutState BuildFlyoutState() => new(
@@ -1070,6 +1133,7 @@ public sealed class UsageTrayContext : ApplicationContext
             _streamDockBridge?.Dispose();
             _flyout?.Dispose();
             _miniDashboard?.Dispose();
+            _heatmap?.Dispose();
             _notifyIcon.Visible = false;
             _notifyIcon.Icon?.Dispose();
             _notifyIcon.Dispose();

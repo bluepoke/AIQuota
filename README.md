@@ -34,7 +34,7 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
 a burn-rate forecast, [additional limits](#additional-limits) such as a model's weekly
 limit, usage credit balance (used/limit, when available), manual refresh, the
-[mini dashboard](#mini-dashboard), login/logout, usage history export/clear, run-at-startup toggle, a session countdown ring
+[mini dashboard](#mini-dashboard), login/logout, the usage history ([yearly heatmap](#yearly-heatmap), export, clear), run-at-startup toggle, a session countdown ring
 toggle, a weekly pace marker toggle, an accessibility mode toggle, a Stream Dock controller toggle, a
 check-for-new-version toggle, and a language switch (German/English):
 
@@ -59,7 +59,8 @@ flyouts. It shows:
   at your current rate
 - a bar for each [additional limit](#additional-limits) your account has, e.g. a weekly
   limit for one model
-- a chart of your weekly usage over the **last 7 days**
+- a chart of your weekly usage over the **last 7 days**, with a calendar button next to its
+  title that opens the [yearly heatmap](#yearly-heatmap)
 
 <p>
   <img src="screenshots/flyout_dark.png" width="372" alt="Tray flyout, dark theme: session, week and credit bars with reset times and forecast, and a 7-day chart of weekly usage against the even pace">
@@ -277,12 +278,56 @@ The history stays on your PC. Nothing is sent anywhere.
   named by a hash of the account ID, so accounts never mix.
 - **Format**: one JSON object per line, with the time, session and week usage, their reset
   times, and the credit balance (when your plan reports one).
-- **Retention**: entries older than 35 days are deleted automatically.
-- Logging out keeps the history. **Usage history → Clear history…** deletes it for all
-  accounts.
-- **Usage history → Export as CSV…** saves the signed-in account's history as a CSV file.
-  It uses the list and decimal separators from your Windows region settings, so it opens
-  as proper columns in Excel on German and English systems alike.
+- **Retention**: entries older than 35 days are deleted automatically. The daily values of
+  the [yearly heatmap](#yearly-heatmap) are kept in a second file per account
+  (`<hash>.daily.jsonl`) for 400 days.
+- Logging out keeps the history. **Usage history → Clear history…** deletes it, including
+  the daily values, for all accounts.
+- **Usage history → Export as CSV…** saves the signed-in account's history as a CSV file,
+  and **Export daily values as CSV…** its daily values (date, share of the weekly quota
+  used, session peak, active hours). Both use the list and decimal separators from your
+  Windows region settings, so they open as proper columns in Excel on German and English
+  systems alike.
+
+### Yearly heatmap
+
+**Usage history → Show yearly heatmap…** (or the calendar button next to the flyout's
+"Last 7 days") opens a calendar of the past 12 months, like GitHub's contribution graph:
+one square per day, in week columns from Monday to Sunday, coloured by how much of your
+weekly quota you used that day. It shows busy periods, quiet weeks, weekends and holidays
+at a glance.
+
+<p>
+  <img src="screenshots/heatmap_dark.png" width="760" alt="Yearly heatmap, dark theme: a year of days in week columns, coloured in five green levels, with month and weekday labels, a summary line, a legend and the values of a hovered day">
+  <img src="screenshots/heatmap_light.png" width="760" alt="The same yearly heatmap in the light theme">
+</p>
+
+- **A day's value** is the share of the weekly quota used that day, in percentage points:
+  the sum of all increases of the weekly usage between two refreshes, counted on the day of
+  the later one. Example: week at 34% in the morning and 52% in the evening → 18% that day.
+  - A weekly reset never counts as negative usage. The new week starts at 0, so what it
+    shows at the next refresh counts as used since the reset.
+  - When the app wasn't running for a while, the increase over that gap counts on the day
+    of the next refresh. The total stays correct, but after a longer gap it can land on a
+    later day than it was actually used.
+  - A day is a calendar day in your time zone, also across daylight saving time changes.
+- **Levels**: no usage (grey), then four shades of green for up to 5%, 10%, 20% and above
+  20% of the weekly quota. The levels are fixed, so different periods stay comparable (using
+  the whole week evenly over 7 days is about 14% a day).
+- **No data**: days on which the app didn't run are drawn as an outline only, because
+  there's no way to tell whether you used Claude. Days in the future aren't drawn.
+- **Hover** a day (or move with the arrow keys) to see its values, e.g. `Tue, 4 Nov 2026 ·
+  18% of the weekly quota · session peak 92% · 6 h active` ("active" are the hours in
+  which the app recorded data). `Esc` closes the window.
+- **Summary** at the top: the number of days with usage, and the busiest calendar week
+  (Monday to Sunday) with its total. That total can exceed 100% when a week contains the
+  end of one weekly window and the start of the next.
+
+The heatmap shows the signed-in account and follows the light/dark theme, the
+[accessibility mode](#accessibility) and the display scaling. It's built from the usage
+history, so it starts with whatever history exists: the first time after the update, the
+daily values are filled in from the last 35 days, and the rest of the year shows as "no
+data" until it has been recorded.
 
 ### Accessibility
 
@@ -304,11 +349,14 @@ colour alone:
   light and a dark taskbar.
 - **Stream Dock keys**: keep their dark background. The text inside a bar changes colour
   where it crosses the fill edge, so it stays readable on both parts.
+- **Yearly heatmap**: the five levels are greys that only differ in brightness, from the
+  background's grey to white (on a light background to black), with more than 9:1 contrast
+  between "no usage" and the highest level.
 
 The setting is off by default, saved across restarts, and applies immediately to the tray
-icon, the flyout and the Stream Dock keys. It's also on automatically while a Windows
-contrast theme is active (the menu entry then shows it as checked and can't be turned
-off). The tooltip and the menu don't change: they already show the exact percentages.
+icon, the flyout, the mini dashboard, the yearly heatmap and the Stream Dock keys. It's
+also on automatically while a Windows contrast theme is active (the menu entry then shows
+it as checked and can't be turned off). The tooltip and the menu don't change: they already show the exact percentages.
 
 ![Tray icon in accessibility mode on a dark and a light taskbar](screenshots/accessibility_tray_icon_states.png)
 
@@ -318,6 +366,8 @@ off). The tooltip and the menu don't change: they already show the exact percent
 </p>
 
 ![Stream Dock keys in accessibility mode](screenshots/accessibility_deck_keys.png)
+
+<img src="screenshots/accessibility_heatmap.png" width="760" alt="Yearly heatmap in accessibility mode, dark and light theme: the levels differ by brightness only">
 
 Contrast (WCAG 2.1): every fill has at least 3.7:1 against the bar background, the bar
 outline at least 3.5:1 against the taskbar or flyout background, and text on the Stream

@@ -62,6 +62,43 @@ public static class UsageHistoryCsv
         return builder.ToString();
     }
 
+    /// <summary>Exports the daily values of the yearly heatmap (<see cref="DailyUsageRecord"/>),
+    /// one row per day, with the same separators as <see cref="Write"/>.</summary>
+    public static void WriteDaily(string path, IEnumerable<DailyUsageRecord> days)
+    {
+        var (listSeparator, decimalSeparator) = ReadRegionalSeparators();
+        File.WriteAllText(path, BuildDaily(days, listSeparator, decimalSeparator), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+    }
+
+    public static string BuildDaily(IEnumerable<DailyUsageRecord> days, string listSeparator, string decimalSeparator)
+    {
+        var numberFormat = new NumberFormatInfo { NumberDecimalSeparator = decimalSeparator, NumberGroupSeparator = "" };
+        string Number(double value)
+        {
+            var text = value.ToString("0.###", numberFormat);
+            return text.Contains(listSeparator) ? $"\"{text}\"" : text;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendJoin(listSeparator,
+            "date", "week_percent_used", "session_peak_percent", "active_hours", "week_resets_at");
+        builder.Append("\r\n");
+
+        foreach (var day in days)
+        {
+            builder.AppendJoin(listSeparator,
+                // yyyy-MM-dd: Excel recognises it as a date in every locale.
+                day.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                Number(day.WeekPoints),
+                Number(day.SessionPeak),
+                day.ActiveHours.ToString(CultureInfo.InvariantCulture),
+                day.WeekResetsAt?.ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture) ?? "");
+            builder.Append("\r\n");
+        }
+
+        return builder.ToString();
+    }
+
     /// <summary>The Windows list and decimal separators (Settings → Time & language → Region),
     /// falling back to "," and "." - and to ";" as list separator should both be the same
     /// character, which would make the file unparseable.</summary>

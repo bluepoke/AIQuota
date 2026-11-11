@@ -2,10 +2,10 @@
 //
 //     dotnet run --project tools/Screenshots [output directory]
 //
-// Writes tray_icon_states.png, context_menu.png, flyout_dark.png, flyout_light.png and
-// mini_dashboard_dark/light.png to the
-// repository's screenshots/ folder (or the given directory), and the same tray icons and
-// flyouts in accessibility mode (accessibility_*.png), plus its Stream Dock keys.
+// Writes tray_icon_states.png, context_menu.png, flyout_dark.png, flyout_light.png,
+// mini_dashboard_dark/light.png and heatmap_dark/light.png to the
+// repository's screenshots/ folder (or the given directory), and the same tray icons,
+// flyouts and heatmap in accessibility mode (accessibility_*.png), plus its Stream Dock keys.
 //
 // - Tray icon and flyout are drawn by the app's own TrayIconFactory and UsageFlyout. Their
 //   drawing methods and fields are private, so they're reached by reflection - if a rename
@@ -283,8 +283,8 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
 
     foreach (var (light, greyscale) in new[] { (false, false), (true, false), (false, true), (true, true) })
     {
-        var flyout = (Form)Activator.CreateInstance(flyoutType, Getter(State(greyscale)), (Func<Task>)(() => Task.CompletedTask), (Action)(() => { }))!;
-        using var bmp = Render(flyout, flyoutType, light, greyscale, "_refreshButton", "_miniDashboardButton");
+        var flyout = (Form)Activator.CreateInstance(flyoutType, Getter(State(greyscale)), (Func<Task>)(() => Task.CompletedTask), (Action)(() => { }), (Action)(() => { }))!;
+        using var bmp = Render(flyout, flyoutType, light, greyscale, "_refreshButton", "_miniDashboardButton", "_heatmapButton");
         flyout.Dispose();
 
         using var framed = Frame(bmp, radius: 16, light: light);
@@ -327,6 +327,79 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
         }
         sheet.Save(Path.Combine(outDir, light ? "mini_dashboard_light.png" : "mini_dashboard_dark.png"), ImageFormat.Png);
     }
+}
+
+// ------------------------------------------------------------------ yearly heatmap
+{
+    // A year of mock daily values: busy weekdays, quiet weekends, two holidays without the
+    // app running, a few crunch weeks, and no data before the app was installed.
+    var today = DateOnly.FromDateTime(DateTime.Now);
+    var installed = today.AddDays(-300);
+    var rnd = new Random(17);
+    var days = new List<DailyUsageRecord>();
+    var crunchWeeks = new HashSet<int> { 6, 7, 19, 31, 40 };
+    for (var date = installed; date <= today; date = date.AddDays(1))
+    {
+        var age = today.DayNumber - date.DayNumber;
+        if (age is >= 120 and < 134 || age is >= 230 and < 236)
+            continue;                                                // holidays: PC off
+        var weekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+        if (weekend && rnd.NextDouble() < 0.5)
+            continue;                                                // PC off at the weekend
+        var week = age / 7;
+        double points = weekend
+            ? (rnd.NextDouble() < 0.3 ? rnd.NextDouble() * 6 : 0)
+            : rnd.NextDouble() < 0.12 ? rnd.NextDouble() * 0.4
+            : crunchWeeks.Contains(week) ? 16 + rnd.NextDouble() * 12
+            : 2 + rnd.NextDouble() * rnd.NextDouble() * 22;
+        var hours = weekend ? rnd.Next(1, 4) : rnd.Next(5, 11);
+        var mask = 0;
+        for (var h = 0; h < hours; h++)
+            mask |= 1 << (8 + h);
+        days.Add(new DailyUsageRecord(date, Math.Round(points, 2), Math.Min(100, Math.Round(points * 4 + rnd.Next(5, 30))), mask, null));
+    }
+
+    var heatmapType = asm.GetType("AIQuota.UsageHeatmap")!;
+    var heatmapStateType = asm.GetType("AIQuota.HeatmapState")!;
+    var paletteType = asm.GetType("AIQuota.FlyoutPalette")!;
+
+    Bitmap RenderHeatmap(bool light, bool greyscale)
+    {
+        var state = Activator.CreateInstance(heatmapStateType, (IReadOnlyList<DailyUsageRecord>)days, true, Account, greyscale)!;
+        var getter = Delegate.CreateDelegate(typeof(Func<>).MakeGenericType(heatmapStateType), new Holder(state),
+            typeof(Holder).GetMethod(nameof(Holder.Get))!.MakeGenericMethod(heatmapStateType));
+        using var form = (Form)Activator.CreateInstance(heatmapType, getter)!;
+        heatmapType.GetField("_palette", PrivInst)!.SetValue(form, paletteType.GetMethod("For")!.Invoke(null, [light]));
+        heatmapType.GetField("_usage", PrivInst)!.SetValue(form, Palette(greyscale, light));
+        heatmapType.GetField("_scale", PrivInst)!.SetValue(form, 2f);
+        heatmapType.GetMethod("ApplyLayout", PrivInst)!.Invoke(form, null);
+        // Hover a busy day two weeks ago to show the day's values.
+        var hovered = days.Where(d => today.DayNumber - d.Date.DayNumber is >= 14 and < 21 && d.WeekPoints > 10).Select(d => (DateOnly?)d.Date).FirstOrDefault() ?? today;
+        heatmapType.GetField("_selected", PrivInst)!.SetValue(form, hovered);
+
+        var bmp = new Bitmap(form.ClientSize.Width, form.ClientSize.Height);
+        using (var g = Graphics.FromImage(bmp))
+            heatmapType.GetMethod("DrawAll", PrivInst)!.Invoke(form, [g]);
+        return bmp;
+    }
+
+    foreach (var light in new[] { false, true })
+    {
+        using var bmp = RenderHeatmap(light, greyscale: false);
+        using var framed = Frame(bmp, radius: 16, light: light);
+        framed.Save(Path.Combine(outDir, light ? "heatmap_light.png" : "heatmap_dark.png"), ImageFormat.Png);
+    }
+
+    // Accessibility mode: dark above light.
+    using var dark = Frame(RenderHeatmap(light: false, greyscale: true), radius: 16, light: false);
+    using var lightFrame = Frame(RenderHeatmap(light: true, greyscale: true), radius: 16, light: true);
+    using var sheet = new Bitmap(Math.Max(dark.Width, lightFrame.Width), dark.Height + lightFrame.Height);
+    using (var g = Graphics.FromImage(sheet))
+    {
+        g.DrawImage(dark, 0, 0);
+        g.DrawImage(lightFrame, 0, dark.Height);
+    }
+    sheet.Save(Path.Combine(outDir, "accessibility_heatmap.png"), ImageFormat.Png);
 }
 
 Console.WriteLine("done");

@@ -19,8 +19,14 @@ public interface IUsageHistory
     /// <paramref name="to"/>, oldest first.</summary>
     IReadOnlyList<UsageHistoryRecord> Query(DateTimeOffset from, DateTimeOffset to);
 
+    /// <summary>Per-day values of the current account for the yearly heatmap, oldest first -
+    /// kept much longer than <see cref="Records"/>, and updated with every <see
+    /// cref="Append"/>.</summary>
+    IReadOnlyList<DailyUsageRecord> DailyUsage { get; }
+
     void Append(UsageHistoryRecord record);
 
-    /// <summary>Deletes the stored history of every account, not just the current one.</summary>
+    /// <summary>Deletes the stored history of every account, not just the current one -
+    /// the raw samples and the daily values.</summary>
     void Clear();
 }

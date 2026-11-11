@@ -27,7 +27,8 @@ internal sealed record FlyoutState(
 /// Small borderless panel shown next to the tray icon on left-click, like the Windows volume
 /// and network flyouts: the current usage at a readable size (session, week with its pace
 /// marker, credits, burn-rate forecast) plus a chart of the past 7 days of weekly usage
-/// against the "even pace" line.
+/// against the "even pace" line. A small calendar button next to the chart's title opens the
+/// yearly heatmap (<see cref="UsageHeatmap"/>).
 ///
 /// It's one custom-painted form - laid out in 96-DPI logical pixels and scaled to the DPI of
 /// the monitor it opens on - with a single real <see cref="Button"/> for refresh, so
@@ -55,8 +56,10 @@ internal sealed class UsageFlyout : Form
     private readonly Func<FlyoutState> _getState;
     private readonly Func<Task> _refresh;
     private readonly Action _openMiniDashboard;
+    private readonly Action _openHeatmap;
     private readonly Button _refreshButton;
     private readonly Button _miniDashboardButton;
+    private readonly Button _heatmapButton;
     private readonly ToolTip _toolTip = new();
     private readonly System.Windows.Forms.Timer _clockTimer = new() { Interval = 30_000 };
     private readonly System.Windows.Forms.Timer _reactivateCheck = new() { Interval = 150 };
@@ -77,15 +80,20 @@ internal sealed class UsageFlyout : Form
 
     // Chart geometry and points from the last paint, for hover hit-testing.
     private RectangleF _plot;
+    /// <summary>The 7-day chart's title from the last layout, where the heatmap button goes
+    /// next to; empty while there's no chart (logged out, nothing fetched yet).</summary>
+    private RectangleF _historyTitle;
     private List<(PointF Point, UsageHistoryRecord Record)> _chartPoints = [];
     private int? _hoverIndex;
 
     /// <param name="openMiniDashboard">Opens the mini dashboard (header button next to refresh).</param>
-    public UsageFlyout(Func<FlyoutState> getState, Func<Task> refresh, Action openMiniDashboard)
+    /// <param name="openHeatmap">Opens the yearly heatmap (button next to the chart's title).</param>
+    public UsageFlyout(Func<FlyoutState> getState, Func<Task> refresh, Action openMiniDashboard, Action openHeatmap)
     {
         _getState = getState;
         _refresh = refresh;
         _openMiniDashboard = openMiniDashboard;
+        _openHeatmap = openHeatmap;
         _state = getState();
 
         FormBorderStyle = FormBorderStyle.None;
@@ -123,6 +131,21 @@ internal sealed class UsageFlyout : Form
             _openMiniDashboard();
         };
         Controls.Add(_miniDashboardButton);
+
+        _heatmapButton = new Button
+        {
+            Text = "", // Segoe MDL2 Assets "Calendar"
+            FlatStyle = FlatStyle.Flat,
+            TabStop = true,
+            UseVisualStyleBackColor = false,
+        };
+        _heatmapButton.FlatAppearance.BorderSize = 0;
+        _heatmapButton.Click += (_, _) =>
+        {
+            HideFlyout();
+            _openHeatmap();
+        };
+        Controls.Add(_heatmapButton);
 
         _clockTimer.Tick += (_, _) => Invalidate();
         _reactivateCheck.Tick += (_, _) =>
@@ -331,6 +354,20 @@ internal sealed class UsageFlyout : Form
         _miniDashboardButton.FlatAppearance.MouseDownBackColor = _palette.Track;
         _miniDashboardButton.AccessibleName = Strings.FlyoutOpenMiniDashboard;
         _toolTip.SetToolTip(_miniDashboardButton, Strings.FlyoutOpenMiniDashboard);
+
+        // Right after the chart's title text, centred on its line.
+        var smallButton = (int)Math.Round(S(24f));
+        var titleWidth = _historyTitle.IsEmpty ? 0 : TextRenderer.MeasureText(Strings.FlyoutHistoryTitle, _titleFont).Width;
+        _heatmapButton.Visible = !_historyTitle.IsEmpty;
+        _heatmapButton.Size = new Size(smallButton, smallButton);
+        _heatmapButton.Location = new Point((int)Math.Round(_historyTitle.X + titleWidth + S(2f)),
+            (int)Math.Round(_historyTitle.Y + (_historyTitle.Height - smallButton) / 2f));
+        _heatmapButton.BackColor = _palette.Background;
+        _heatmapButton.ForeColor = _palette.Text;
+        _heatmapButton.FlatAppearance.MouseOverBackColor = _palette.Hover;
+        _heatmapButton.FlatAppearance.MouseDownBackColor = _palette.Track;
+        _heatmapButton.AccessibleName = Strings.FlyoutOpenHeatmap;
+        _toolTip.SetToolTip(_heatmapButton, Strings.FlyoutOpenHeatmap);
         BackColor = _palette.Background;
     }
 
@@ -350,6 +387,7 @@ internal sealed class UsageFlyout : Form
         _iconFont = new Font("Segoe MDL2 Assets", S(14f), FontStyle.Regular, GraphicsUnit.Pixel);
         _refreshButton.Font = _iconFont;
         _miniDashboardButton.Font = _iconFont;
+        _heatmapButton.Font = _iconFont;
         _fontScale = _scale;
 
         oldTitle?.Dispose();
@@ -465,6 +503,7 @@ internal sealed class UsageFlyout : Form
         }
         y += S(1f) + S(12f);
 
+        _historyTitle = RectangleF.Empty;
         if (!_state.LoggedIn)
         {
             DrawText(g, Strings.MenuNotLoggedIn, _bodyFont, _palette.Text, new RectangleF(left, y, width, S(20f)));
@@ -483,7 +522,8 @@ internal sealed class UsageFlyout : Form
             y = bars.DrawSection(g, section, _bodyFont, _titleFont, _bodyFont, left, y, width) + S(14f);
 
         // 7-day chart
-        DrawText(g, Strings.FlyoutHistoryTitle, _titleFont, _palette.Text, new RectangleF(left, y, width / 2f, S(20f)));
+        _historyTitle = new RectangleF(left, y, width / 2f, S(20f));
+        DrawText(g, Strings.FlyoutHistoryTitle, _titleFont, _palette.Text, _historyTitle);
         DrawLegend(g, snapshot, left + width, y + S(10f));
         y += S(20f) + S(8f);
         DrawChart(g, new RectangleF(left + S(ChartLeftInset), y, width - S(ChartLeftInset), S(ChartHeight)), snapshot, now);

@@ -67,8 +67,8 @@ public static class Strings
         "No usage history has been recorded for this account yet.");
     public static string HistoryExportFailed(string message) => T($"Export fehlgeschlagen:\n{message}", $"Export failed:\n{message}");
     public static string ConfirmClearHistory => T(
-        "Den gespeicherten Nutzungsverlauf aller Konten auf diesem PC löschen?\n\nDie Prognose startet danach ohne Daten neu.",
-        "Delete the stored usage history of all accounts on this PC?\n\nThe forecast starts over without data afterwards.");
+        "Den gespeicherten Nutzungsverlauf aller Konten auf diesem PC löschen, einschließlich der Tageswerte der Jahresübersicht?\n\nDie Prognose startet danach ohne Daten neu.",
+        "Delete the stored usage history of all accounts on this PC, including the daily values of the yearly heatmap?\n\nThe forecast starts over without data afterwards.");
 
     /// <summary>The burn-rate forecast, as shown in the tray flyout.</summary>
     public static string ForecastLimitInText(TimeSpan timeToLimit) => T(
@@ -100,6 +100,71 @@ public static class Strings
     public static string MiniDashboardLock => T("Position sperren", "Lock position");
     public static string MiniDashboardOpenFlyout => T("Flyout öffnen", "Open flyout");
     public static string MiniDashboardClose => T("Schließen", "Close");
+
+    // Yearly heatmap
+    public static string MenuHistoryHeatmap => T("Jahresübersicht anzeigen…", "Show yearly heatmap…");
+    public static string MenuHistoryExportDaily => T("Tageswerte als CSV exportieren…", "Export daily values as CSV…");
+    public static string HistoryExportDailyDialogTitle => T("Tageswerte exportieren", "Export daily values");
+    public static string FlyoutOpenHeatmap => T("Jahresübersicht anzeigen", "Show yearly heatmap");
+    public static string HeatmapTitle => T("Claude Nutzung – Jahresübersicht", "Claude Usage – yearly heatmap");
+    public static string HeatmapExplanation => T(
+        "Jedes Feld: Anteil des Wochenkontingents, der an diesem Tag verbraucht wurde",
+        "Each square: share of the weekly quota used that day");
+    public static string HeatmapLess => T("Weniger", "Less");
+    public static string HeatmapMore => T("Mehr", "More");
+    public static string HeatmapNoData => T("Keine Daten", "No data");
+    public static string HeatmapNoUsageYet => T(
+        "Im letzten Jahr wurde noch keine Nutzung aufgezeichnet",
+        "No usage recorded in the last year yet");
+
+    private static readonly string[] MonthsShortDe = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+    private static readonly string[] MonthsShortEn = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    /// <summary>Short month name, 1 = January.</summary>
+    public static string MonthShort(int month) => (Current == AppLanguage.German ? MonthsShortDe : MonthsShortEn)[month - 1];
+
+    public static string WeekdayShort(DayOfWeek day) =>
+        (Current == AppLanguage.German ? WeekdaysShortDe : WeekdaysShortEn)[(int)day];
+
+    /// <summary>"Tue, 4 Nov 2026" / "Di, 4. Nov 2026".</summary>
+    public static string HeatmapDate(DateOnly date) => T(
+        $"{WeekdayShort(date.DayOfWeek)}, {date.Day}. {MonthShort(date.Month)} {date.Year}",
+        $"{WeekdayShort(date.DayOfWeek)}, {date.Day} {MonthShort(date.Month)} {date.Year}");
+
+    /// <summary>Hover text of one day in the heatmap; <paramref name="weekPoints"/> null means
+    /// there were no samples that day.</summary>
+    public static string HeatmapDayText(DateOnly date, double? weekPoints, double sessionPeak, int activeHours)
+    {
+        if (weekPoints is not { } points)
+            return $"{HeatmapDate(date)} · " + T("keine Daten (App lief nicht)", "no data (app not running)");
+        var percent = Math.Round(points);
+        var peak = Math.Round(sessionPeak);
+        return T(
+            $"{HeatmapDate(date)} · {percent:0}% des Wochenkontingents · Sitzungsspitze {peak:0}% · {activeHours} h aktiv",
+            $"{HeatmapDate(date)} · {percent:0}% of the weekly quota · session peak {peak:0}% · {activeHours} h active");
+    }
+
+    /// <summary>"3–9 Mar" / "28 Apr – 4 May" (German: "3.–9. Mär", "28. Apr – 4. Mai").</summary>
+    public static string HeatmapWeekRange(DateOnly monday)
+    {
+        var sunday = monday.AddDays(6);
+        if (monday.Month == sunday.Month)
+            return T($"{monday.Day}.–{sunday.Day}. {MonthShort(sunday.Month)}", $"{monday.Day}–{sunday.Day} {MonthShort(sunday.Month)}");
+        return T(
+            $"{monday.Day}. {MonthShort(monday.Month)} – {sunday.Day}. {MonthShort(sunday.Month)}",
+            $"{monday.Day} {MonthShort(monday.Month)} – {sunday.Day} {MonthShort(sunday.Month)}");
+    }
+
+    /// <summary>"128 active days in the last year · busiest week: 98% (3–9 Mar)".</summary>
+    public static string HeatmapSummary(int activeDays, double busiestWeekPoints, DateOnly busiestWeekStart)
+    {
+        var days = T(
+            activeDays == 1 ? "1 aktiver Tag im letzten Jahr" : $"{activeDays} aktive Tage im letzten Jahr",
+            activeDays == 1 ? "1 active day in the last year" : $"{activeDays} active days in the last year");
+        var percent = Math.Round(busiestWeekPoints);
+        var range = HeatmapWeekRange(busiestWeekStart);
+        return T($"{days} · stärkste Woche: {percent:0}% ({range})", $"{days} · busiest week: {percent:0}% ({range})");
+    }
     public static string FlyoutHistoryTitle => T("Letzte 7 Tage", "Last 7 days");
     public static string FlyoutLegendUsage => T("Woche", "Week");
     public static string FlyoutLegendPace => T("Pace", "Even pace");
