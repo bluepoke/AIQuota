@@ -51,6 +51,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _removeNotificationRegistrationItem;
     private readonly ToolStripMenuItem _newVersionAvailableItem;
     private readonly ToolStripMenuItem _refreshItem;
+    private readonly ToolStripMenuItem _miniDashboardItem;
     private readonly ToolStripMenuItem _exitItem;
     private readonly ToolStripMenuItem _languageMenu;
     private readonly ToolStripMenuItem _languageGermanItem;
@@ -67,6 +68,8 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly SynchronizationContext _uiContext;
     private StreamDockBridge? _streamDockBridge;
     private UsageFlyout? _flyout;
+    private MiniDashboard? _miniDashboard;
+    private readonly MiniDashboardSettings _miniDashboardSettings = MiniDashboardSettings.Load();
 
     private bool _sessionWarningShown;
     private bool _weeklyWarningShown;
@@ -158,6 +161,14 @@ public sealed class UsageTrayContext : ApplicationContext
         _newVersionAvailableItem = new ToolStripMenuItem { Visible = false };
         _newVersionAvailableItem.Click += (_, _) => OnNewVersionClicked();
         _refreshItem = new ToolStripMenuItem();
+        _miniDashboardItem = new ToolStripMenuItem { CheckOnClick = false };
+        _miniDashboardItem.Click += (_, _) =>
+        {
+            if (_miniDashboardItem.Checked)
+                CloseMiniDashboard();
+            else
+                ShowMiniDashboard();
+        };
         _refreshItem.Click += async (_, _) => await RefreshAsync();
         _exitItem = new ToolStripMenuItem();
         _exitItem.Click += (_, _) => ExitThread();
@@ -205,6 +216,7 @@ public sealed class UsageTrayContext : ApplicationContext
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_refreshItem);
+        menu.Items.Add(_miniDashboardItem);
         menu.Items.Add(_loginItem);
         menu.Items.Add(_logoutItem);
         menu.Items.Add(_historyMenu);
@@ -246,6 +258,8 @@ public sealed class UsageTrayContext : ApplicationContext
         UpdateLoginMenuState();
         if (_streamDockItem.Checked)
             StartStreamDockBridge();
+        if (_miniDashboardSettings.IsOpen)
+            ShowMiniDashboard();
         _ = RefreshAsync();
         _ = CheckForNewVersionAsync();
     }
@@ -269,6 +283,7 @@ public sealed class UsageTrayContext : ApplicationContext
         if (_availableUpdate is not null)
             _newVersionAvailableItem.Text = Strings.MenuNewVersionAvailable(_availableUpdate.Version);
         _refreshItem.Text = Strings.MenuRefresh;
+        _miniDashboardItem.Text = Strings.MenuMiniDashboard;
         _exitItem.Text = Strings.MenuExit;
         _languageMenu.Text = Strings.MenuLanguage;
         _languageGermanItem.Checked = Strings.Current == AppLanguage.German;
@@ -404,8 +419,32 @@ public sealed class UsageTrayContext : ApplicationContext
     {
         if (e.Button != MouseButtons.Left)
             return;
-        _flyout ??= new UsageFlyout(BuildFlyoutState, RefreshAsync);
-        _flyout.Toggle(Cursor.Position);
+        Flyout.Toggle(Cursor.Position);
+    }
+
+    private UsageFlyout Flyout => _flyout ??= new UsageFlyout(BuildFlyoutState, RefreshAsync, ShowMiniDashboard);
+
+    /// <summary>Shows the mini dashboard (see <see cref="MiniDashboard"/>) and remembers that
+    /// it's open, so it reopens on the next start.</summary>
+    private void ShowMiniDashboard()
+    {
+        _miniDashboard ??= new MiniDashboard(BuildFlyoutState, RefreshAsync,
+            openFlyout: () => Flyout.Open(Cursor.Position),
+            close: CloseMiniDashboard,
+            _miniDashboardSettings, settings => settings.Save());
+        if (!_miniDashboard.Visible)
+            _miniDashboard.ShowDashboard();
+        _miniDashboardSettings.IsOpen = true;
+        _miniDashboardSettings.Save();
+        _miniDashboardItem.Checked = true;
+    }
+
+    private void CloseMiniDashboard()
+    {
+        _miniDashboard?.HideDashboard();
+        _miniDashboardSettings.IsOpen = false;
+        _miniDashboardSettings.Save();
+        _miniDashboardItem.Checked = false;
     }
 
     /// <summary>A button or the body of a notification was clicked (see <see
@@ -423,8 +462,7 @@ public sealed class UsageTrayContext : ApplicationContext
                 OnNewVersionClicked();
                 break;
             default:
-                _flyout ??= new UsageFlyout(BuildFlyoutState, RefreshAsync);
-                _flyout.Open(Cursor.Position);
+                Flyout.Open(Cursor.Position);
                 break;
         }
     }
@@ -450,9 +488,13 @@ public sealed class UsageTrayContext : ApplicationContext
         ExitThread();
     }
 
-    /// <summary>Re-reads the flyout's state if it has been created - it only repaints while
-    /// it's open.</summary>
-    private void UpdateFlyout() => _flyout?.UpdateState();
+    /// <summary>Re-reads the state of the flyout and the mini dashboard, if they have been
+    /// created - each only repaints while it's open.</summary>
+    private void UpdateFlyout()
+    {
+        _flyout?.UpdateState();
+        _miniDashboard?.UpdateState();
+    }
 
     private FlyoutState BuildFlyoutState() => new(
         LoggedIn: _oauth.IsLoggedIn,
@@ -466,7 +508,8 @@ public sealed class UsageTrayContext : ApplicationContext
         SessionForecast: _sessionForecast,
         WeeklyForecast: _weeklyForecast,
         History: _history.Records,
-        Greyscale: GreyscaleActive);
+        Greyscale: GreyscaleActive,
+        HasError: _currentIconKind == IconKind.Warning);
 
     private void OnToggleSessionRing(object? sender, EventArgs e)
     {
@@ -1026,6 +1069,7 @@ public sealed class UsageTrayContext : ApplicationContext
             _newVersionCheckTimer.Dispose();
             _streamDockBridge?.Dispose();
             _flyout?.Dispose();
+            _miniDashboard?.Dispose();
             _notifyIcon.Visible = false;
             _notifyIcon.Icon?.Dispose();
             _notifyIcon.Dispose();

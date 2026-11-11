@@ -2,7 +2,8 @@
 //
 //     dotnet run --project tools/Screenshots [output directory]
 //
-// Writes tray_icon_states.png, context_menu.png, flyout_dark.png and flyout_light.png to the
+// Writes tray_icon_states.png, context_menu.png, flyout_dark.png, flyout_light.png and
+// mini_dashboard_dark/light.png to the
 // repository's screenshots/ folder (or the given directory), and the same tray icons and
 // flyouts in accessibility mode (accessibility_*.png), plus its Stream Dock keys.
 //
@@ -225,6 +226,7 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
     menu.Items.Add(Item(Strings.StatusUpdated(snapshot.FetchedAt), false));
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(Item(Strings.MenuRefresh));
+    menu.Items.Add(Item(Strings.MenuMiniDashboard));
     menu.Items.Add(Item(Strings.MenuLogout));
     menu.Items.Add(history_);
     menu.Items.Add(settings);
@@ -243,41 +245,87 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
     menu.Dispose();
 }
 
-// ------------------------------------------------------------------ flyout
+// ------------------------------------------------------------------ flyout and mini dashboard
 {
     var flyoutType = asm.GetType("AIQuota.UsageFlyout")!;
+    var dashboardType = asm.GetType("AIQuota.MiniDashboard")!;
+    var settingsType = asm.GetType("AIQuota.MiniDashboardSettings")!;
     var stateType = asm.GetType("AIQuota.FlyoutState")!;
-    var paletteType = flyoutType.GetNestedType("Palette", BindingFlags.NonPublic)!;
+    var paletteType = asm.GetType("AIQuota.FlyoutPalette")!;
+
+    object State(bool greyscale) => Activator.CreateInstance(stateType,
+        true, Account, Strings.StatusUpdated(snapshot.FetchedAt), false, snapshot, 25, false, true,
+        new UsageForecast(ForecastKind.Limit, TimeSpan.FromMinutes(38), 100), new UsageForecast(ForecastKind.ResetFirst, ProjectedPercent: 78),
+        (IReadOnlyList<UsageHistoryRecord>)history, greyscale, false)!;
+    Delegate Getter(object state) => Delegate.CreateDelegate(typeof(Func<>).MakeGenericType(stateType), new Holder(state),
+        typeof(Holder).GetMethod(nameof(Holder.Get))!.MakeGenericMethod(stateType));
+
+    // Renders a custom-painted form offscreen at 200%, with the named buttons drawn on top
+    // (the form is never shown, so their Visible is always false and can't be used).
+    Bitmap Render(Form form, Type type, bool light, bool greyscale, params string[] buttonFields)
+    {
+        type.GetField("_palette", PrivInst)!.SetValue(form, paletteType.GetMethod("For")!.Invoke(null, [light]));
+        type.GetField("_usage", PrivInst)!.SetValue(form, Palette(greyscale, light));
+        type.GetField("_scale", PrivInst)!.SetValue(form, 2f);
+        type.GetMethod("ApplyLayout", PrivInst)!.Invoke(form, null);
+
+        var bmp = new Bitmap(form.ClientSize.Width, form.ClientSize.Height);
+        form.DrawToBitmap(bmp, new Rectangle(Point.Empty, form.ClientSize));
+        using var g = Graphics.FromImage(bmp);
+        foreach (var button in buttonFields.Select(f => (Button)type.GetField(f, PrivInst)!.GetValue(form)!))
+        {
+            using var buttonBmp = new Bitmap(button.Width, button.Height);
+            button.DrawToBitmap(buttonBmp, new Rectangle(Point.Empty, button.Size));
+            g.DrawImage(buttonBmp, button.Location);
+        }
+        return bmp;
+    }
 
     foreach (var (light, greyscale) in new[] { (false, false), (true, false), (false, true), (true, true) })
     {
-        var state = Activator.CreateInstance(stateType,
-            true, Account, Strings.StatusUpdated(snapshot.FetchedAt), false, snapshot, 25, false, true,
-            new UsageForecast(ForecastKind.Limit, TimeSpan.FromMinutes(38), 100), new UsageForecast(ForecastKind.ResetFirst, ProjectedPercent: 78),
-            (IReadOnlyList<UsageHistoryRecord>)history, greyscale)!;
-        var getter = Delegate.CreateDelegate(typeof(Func<>).MakeGenericType(stateType), new Holder(state),
-            typeof(Holder).GetMethod(nameof(Holder.Get))!.MakeGenericMethod(stateType));
-
-        var flyout = (Form)Activator.CreateInstance(flyoutType, getter, (Func<Task>)(() => Task.CompletedTask))!;
-        flyoutType.GetField("_palette", PrivInst)!.SetValue(flyout, paletteType.GetMethod("For")!.Invoke(null, [light]));
-        flyoutType.GetField("_usage", PrivInst)!.SetValue(flyout, Palette(greyscale, light));
-        flyoutType.GetField("_scale", PrivInst)!.SetValue(flyout, 2f);
-        flyoutType.GetMethod("ApplyLayout", PrivInst)!.Invoke(flyout, null);
-
-        using var bmp = new Bitmap(flyout.ClientSize.Width, flyout.ClientSize.Height);
-        flyout.DrawToBitmap(bmp, new Rectangle(Point.Empty, flyout.ClientSize));
-        var button = (Button)flyoutType.GetField("_refreshButton", PrivInst)!.GetValue(flyout)!;
-        using (var buttonBmp = new Bitmap(button.Width, button.Height))
-        {
-            button.DrawToBitmap(buttonBmp, new Rectangle(Point.Empty, button.Size));
-            using var g = Graphics.FromImage(bmp);
-            g.DrawImage(buttonBmp, button.Location);
-        }
+        var flyout = (Form)Activator.CreateInstance(flyoutType, Getter(State(greyscale)), (Func<Task>)(() => Task.CompletedTask), (Action)(() => { }))!;
+        using var bmp = Render(flyout, flyoutType, light, greyscale, "_refreshButton", "_miniDashboardButton");
         flyout.Dispose();
 
         using var framed = Frame(bmp, radius: 16, light: light);
         var name = (greyscale ? "accessibility_" : "") + (light ? "flyout_light.png" : "flyout_dark.png");
         framed.Save(Path.Combine(outDir, name), ImageFormat.Png);
+    }
+
+    // Mini dashboard: compact above expanded, per theme. In-memory settings only - nothing is
+    // saved (the save callback is a no-op).
+    var saveNothing = Delegate.CreateDelegate(typeof(Action<>).MakeGenericType(settingsType),
+        typeof(Holder).GetMethod(nameof(Holder.Ignore))!.MakeGenericMethod(settingsType));
+    foreach (var light in new[] { false, true })
+    {
+        var frames = new List<Bitmap>();
+        foreach (var expanded in new[] { false, true })
+        {
+            var settings = Activator.CreateInstance(settingsType)!;
+            settingsType.GetProperty("Expanded")!.SetValue(settings, expanded);
+            settingsType.GetProperty("LogicalWidth")!.SetValue(settings, 300);
+            settingsType.GetProperty("Bars")!.SetValue(settings, new List<string> { "session", "week", "limit:weekly_scoped:opus" });
+            var dashboard = (Form)Activator.CreateInstance(dashboardType, Getter(State(false)), (Func<Task>)(() => Task.CompletedTask),
+                (Action)(() => { }), (Action)(() => { }), settings, saveNothing)!;
+            using var bmp = expanded
+                ? Render(dashboard, dashboardType, light, greyscale: false, "_refreshButton", "_closeButton")
+                : Render(dashboard, dashboardType, light, greyscale: false, "_closeButton");
+            dashboard.Dispose();
+            frames.Add(Frame(bmp, radius: 16, light: light));
+        }
+
+        using var sheet = new Bitmap(frames.Max(f => f.Width), frames.Sum(f => f.Height));
+        using (var g = Graphics.FromImage(sheet))
+        {
+            var y = 0;
+            foreach (var frame in frames)
+            {
+                g.DrawImage(frame, 0, y);
+                y += frame.Height;
+                frame.Dispose();
+            }
+        }
+        sheet.Save(Path.Combine(outDir, light ? "mini_dashboard_light.png" : "mini_dashboard_dark.png"), ImageFormat.Png);
     }
 }
 
@@ -337,4 +385,6 @@ static GraphicsPath Rounded(RectangleF r, float radius)
 sealed class Holder(object state)
 {
     public T Get<T>() => (T)state;
+
+    public static void Ignore<T>(T _) { }
 }

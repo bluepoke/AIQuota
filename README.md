@@ -33,8 +33,8 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 
 Right-click for the full menu: signed-in account, exact percentages with reset day/time,
 a burn-rate forecast, [additional limits](#additional-limits) such as a model's weekly
-limit, usage credit balance (used/limit, when available), manual refresh,
-login/logout, usage history export/clear, run-at-startup toggle, a session countdown ring
+limit, usage credit balance (used/limit, when available), manual refresh, the
+[mini dashboard](#mini-dashboard), login/logout, usage history export/clear, run-at-startup toggle, a session countdown ring
 toggle, a weekly pace marker toggle, an accessibility mode toggle, a Stream Dock controller toggle, a
 check-for-new-version toggle, and a language switch (German/English):
 
@@ -45,7 +45,8 @@ check-for-new-version toggle, and a language switch (German/English):
 Left-click the icon for a flyout next to the taskbar, like the Windows volume and network
 flyouts. It shows:
 
-- your account, when the data was last updated, and a refresh button
+- your account, when the data was last updated, a button that opens the
+  [mini dashboard](#mini-dashboard), and a refresh button
 - the session, week and (when your plan has them) credit usage as large bars, and the
   reset time as both clock time and countdown (`Resets 14:30 · in 1.6h`). Scale ticks
   divide the session bar into its 5 hours and the week bar into its 7 days (so 20% and
@@ -83,6 +84,42 @@ and your display scaling.
 
 A double-click opens the flyout too (the second click keeps it open). It no longer
 refreshes — use the flyout's refresh button or **Refresh now** in the menu.
+
+### Mini dashboard
+
+For keeping an eye on your usage all the time, open the **Mini dashboard** from the
+right-click menu or with the button in the flyout's header. It's a small window you can put
+anywhere, e.g. next to your editor or on a second monitor, showing the bars you pick:
+
+<p>
+  <img src="screenshots/mini_dashboard_dark.png" width="330" alt="Mini dashboard, dark theme: compact layout with session, week and Opus bars, pace markers and projections on top, expanded layout with reset times, pace markers and forecasts below">
+  <img src="screenshots/mini_dashboard_light.png" width="330" alt="The same mini dashboard in the light theme">
+</p>
+
+- **Compact** layout: one row per bar, with its name, percentage, pace marker and projected
+  usage. **Expanded** layout: each bar as in the flyout, with reset time, pace marker,
+  projected usage and forecast, under a header with the update time and a refresh button.
+- **Closing**: the small **×** in its top-right corner, **Close** in its right-click menu, or
+  **Mini dashboard** in the tray icon's menu.
+- **Moving**: drag it anywhere. It snaps to the edges of your screens (taskbar excluded);
+  hold **Shift** while dragging to place it freely.
+- **Size**: drag its left or right edge to make it wider or narrower. The height follows the
+  number of bars and the layout.
+- Its **right-click menu** (also with Shift+F10 or the context-menu key) has:
+  - **Bars**: which ones to show – session, week, credits and every
+    [additional limit](#additional-limits). At least one stays selected.
+  - **Layout**: compact or expanded.
+  - **Always on top** (on by default), **Opacity** (100% down to 30%) and **Lock
+    position**, which stops it from being moved or resized by accident.
+  - **Refresh now**, **Open flyout** and **Close**.
+
+It doesn't appear in the taskbar or in Alt+Tab, doesn't take the focus when it opens, and
+follows the light/dark theme, the [accessibility mode](#accessibility) and the display
+scaling of the monitor it's on. Everything – whether it's open, its position, width and
+settings – is remembered (in `HKCU\Software\AIQuota\MiniDashboard`), so it comes back after a
+restart. If its saved position isn't on any screen any more (e.g. a monitor was unplugged),
+it's moved back onto the nearest one. It uses the same data as the flyout and never fetches
+on its own.
 
 The app gets this data the same way the official `claude` CLI does: by signing you in
 with the same public OAuth client Claude Code uses, then calling the same

@@ -86,6 +86,20 @@ public static class Strings
     public static string FlyoutSessionTitle => T("Sitzung (5h)", "Session (5h)");
     public static string FlyoutWeekTitle => T("Woche", "Week");
     public static string FlyoutCreditsTitle => T("Nutzungsguthaben", "Usage credits");
+
+    // Mini dashboard
+    public static string MenuMiniDashboard => T("Mini-Dashboard", "Mini dashboard");
+    public static string MiniDashboardTitle => T("Claude Nutzung – Mini-Dashboard", "Claude Usage – mini dashboard");
+    public static string FlyoutOpenMiniDashboard => T("Mini-Dashboard öffnen", "Open mini dashboard");
+    public static string MiniDashboardBars => T("Balken", "Bars");
+    public static string MiniDashboardLayout => T("Darstellung", "Layout");
+    public static string MiniDashboardCompact => T("Kompakt", "Compact");
+    public static string MiniDashboardExpanded => T("Erweitert", "Expanded");
+    public static string MiniDashboardAlwaysOnTop => T("Immer im Vordergrund", "Always on top");
+    public static string MiniDashboardOpacity => T("Deckkraft", "Opacity");
+    public static string MiniDashboardLock => T("Position sperren", "Lock position");
+    public static string MiniDashboardOpenFlyout => T("Flyout öffnen", "Open flyout");
+    public static string MiniDashboardClose => T("Schließen", "Close");
     public static string FlyoutHistoryTitle => T("Letzte 7 Tage", "Last 7 days");
     public static string FlyoutLegendUsage => T("Woche", "Week");
     public static string FlyoutLegendPace => T("Pace", "Even pace");

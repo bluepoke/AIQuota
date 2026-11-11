@@ -20,7 +20,8 @@ internal sealed record FlyoutState(
     UsageForecast SessionForecast,
     UsageForecast WeeklyForecast,
     IReadOnlyList<UsageHistoryRecord> History,
-    bool Greyscale = false);
+    bool Greyscale = false,
+    bool HasError = false);
 
 /// <summary>
 /// Small borderless panel shown next to the tray icon on left-click, like the Windows volume
@@ -53,13 +54,15 @@ internal sealed class UsageFlyout : Form
 
     private readonly Func<FlyoutState> _getState;
     private readonly Func<Task> _refresh;
+    private readonly Action _openMiniDashboard;
     private readonly Button _refreshButton;
+    private readonly Button _miniDashboardButton;
     private readonly ToolTip _toolTip = new();
     private readonly System.Windows.Forms.Timer _clockTimer = new() { Interval = 30_000 };
     private readonly System.Windows.Forms.Timer _reactivateCheck = new() { Interval = 150 };
 
     private FlyoutState _state;
-    private Palette _palette = Palette.For(SystemTheme.IsLightTaskbar());
+    private FlyoutPalette _palette = FlyoutPalette.For(SystemTheme.IsLightTaskbar());
     private UsagePalette _usage = UsagePalette.Standard(SystemTheme.IsLightTaskbar());
     private float _scale = 1f;
     private float _fontScale;
@@ -77,10 +80,12 @@ internal sealed class UsageFlyout : Form
     private List<(PointF Point, UsageHistoryRecord Record)> _chartPoints = [];
     private int? _hoverIndex;
 
-    public UsageFlyout(Func<FlyoutState> getState, Func<Task> refresh)
+    /// <param name="openMiniDashboard">Opens the mini dashboard (header button next to refresh).</param>
+    public UsageFlyout(Func<FlyoutState> getState, Func<Task> refresh, Action openMiniDashboard)
     {
         _getState = getState;
         _refresh = refresh;
+        _openMiniDashboard = openMiniDashboard;
         _state = getState();
 
         FormBorderStyle = FormBorderStyle.None;
@@ -103,6 +108,21 @@ internal sealed class UsageFlyout : Form
         _refreshButton.FlatAppearance.BorderSize = 0;
         _refreshButton.Click += async (_, _) => await _refresh();
         Controls.Add(_refreshButton);
+
+        _miniDashboardButton = new Button
+        {
+            Text = "", // Segoe MDL2 Assets "OpenInNewWindow"
+            FlatStyle = FlatStyle.Flat,
+            TabStop = true,
+            UseVisualStyleBackColor = false,
+        };
+        _miniDashboardButton.FlatAppearance.BorderSize = 0;
+        _miniDashboardButton.Click += (_, _) =>
+        {
+            HideFlyout();
+            _openMiniDashboard();
+        };
+        Controls.Add(_miniDashboardButton);
 
         _clockTimer.Tick += (_, _) => Invalidate();
         _reactivateCheck.Tick += (_, _) =>
@@ -176,7 +196,7 @@ internal sealed class UsageFlyout : Form
     private void ApplyTheme()
     {
         var light = SystemTheme.IsLightTaskbar();
-        _palette = Palette.For(light);
+        _palette = FlyoutPalette.For(light);
         _usage = UsagePalette.For(_state.Greyscale, light);
     }
 
@@ -302,6 +322,15 @@ internal sealed class UsageFlyout : Form
         _refreshButton.FlatAppearance.MouseDownBackColor = _palette.Track;
         _refreshButton.AccessibleName = Strings.MenuRefresh;
         _toolTip.SetToolTip(_refreshButton, Strings.MenuRefresh);
+
+        _miniDashboardButton.Size = _refreshButton.Size;
+        _miniDashboardButton.Location = new Point(_refreshButton.Left - buttonSize, _refreshButton.Top);
+        _miniDashboardButton.BackColor = _palette.Background;
+        _miniDashboardButton.ForeColor = _palette.Text;
+        _miniDashboardButton.FlatAppearance.MouseOverBackColor = _palette.Hover;
+        _miniDashboardButton.FlatAppearance.MouseDownBackColor = _palette.Track;
+        _miniDashboardButton.AccessibleName = Strings.FlyoutOpenMiniDashboard;
+        _toolTip.SetToolTip(_miniDashboardButton, Strings.FlyoutOpenMiniDashboard);
         BackColor = _palette.Background;
     }
 
@@ -320,6 +349,7 @@ internal sealed class UsageFlyout : Form
         _smallFont = new Font("Segoe UI", S(11f), FontStyle.Regular, GraphicsUnit.Pixel);
         _iconFont = new Font("Segoe MDL2 Assets", S(14f), FontStyle.Regular, GraphicsUnit.Pixel);
         _refreshButton.Font = _iconFont;
+        _miniDashboardButton.Font = _iconFont;
         _fontScale = _scale;
 
         oldTitle?.Dispose();
@@ -418,7 +448,7 @@ internal sealed class UsageFlyout : Form
         var left = S(Pad);
         var width = S(LogicalWidth - 2 * Pad);
         var y = S(Pad);
-        var headerTextWidth = width - S(36f);
+        var headerTextWidth = width - S(68f);
 
         // Header: account and last update / status, refresh button on the right.
         var title = _state.LoggedIn ? _state.AccountLabel ?? Strings.AppTitle : Strings.AppTitle;
@@ -446,55 +476,11 @@ internal sealed class UsageFlyout : Form
         if (_state.Snapshot is not { } snapshot)
             return y - S(12f) + S(Pad);
 
-        // Session - with a pace marker like the week's (the same setting turns both on/off),
-        // here for an even spread over the 5 hours. None before a session starts: there's no
-        // clock running yet.
-        double? sessionPace = !_state.SessionNotStarted && snapshot.SessionResetsAt is { } resetForPace
-            ? UsageWindows.SessionPaceFraction(resetForPace, now)
-            : null;
-        y = DrawTitleRow(g, Strings.FlyoutSessionTitle, $"{snapshot.SessionPercent}%", left, y, width);
-        DrawBar(g, new RectangleF(left, y, width, S(8f)), snapshot.SessionPercent, _state.SessionNotStarted,
-            paceFraction: _state.ShowPaceMarker ? sessionPace : null,
-            projectedPercent: _state.SessionForecast.ProjectedPercent, sections: UsageWindows.SessionHours);
-        y += S(8f) + S(6f);
-        var sessionDetail = _state.SessionNotStarted || snapshot.SessionResetsAt is not { } sessionReset
-            ? Strings.FlyoutSessionNotStarted
-            : Strings.FlyoutResetLine(sessionReset, now)
-                + (_state.ShowPaceMarker && sessionPace is { } sp ? Strings.PaceSuffix((int)Math.Round(sp * 100)) : "");
-        DrawText(g, sessionDetail, _bodyFont, _palette.Secondary, new RectangleF(left, y, width, S(18f)));
-        y += S(18f);
-        y = DrawForecast(g, _state.SessionForecast, left, y, width);
-        y += S(14f);
-        y = DrawAdditionalLimits(g, snapshot, sessionGroup: true, left, y, width, now);
-
-        // Week
-        double? pace = snapshot.WeeklyResetsAt is { } weekReset ? UsageWindows.WeeklyPaceFraction(weekReset, now) : null;
-        y = DrawTitleRow(g, Strings.FlyoutWeekTitle, $"{snapshot.WeeklyPercent}%", left, y, width);
-        DrawBar(g, new RectangleF(left, y, width, S(8f)), snapshot.WeeklyPercent, outlineOnly: false,
-            paceFraction: _state.ShowPaceMarker ? pace : null,
-            projectedPercent: _state.WeeklyForecast.ProjectedPercent, sections: UsageWindows.WeekDays);
-        y += S(8f) + S(6f);
-        if (snapshot.WeeklyResetsAt is { } weeklyReset)
-        {
-            var weekDetail = Strings.FlyoutResetLine(weeklyReset, now)
-                + (_state.ShowPaceMarker && pace is { } p ? Strings.PaceSuffix((int)Math.Round(p * 100)) : "");
-            DrawText(g, weekDetail, _bodyFont, _palette.Secondary, new RectangleF(left, y, width, S(18f)));
-            y += S(18f);
-        }
-        y = DrawForecast(g, _state.WeeklyForecast, left, y, width);
-        y += S(14f);
-        y = DrawAdditionalLimits(g, snapshot, sessionGroup: false, left, y, width, now);
-
-        // Credits
-        if (_state.CreditPercent is { } creditPercent &&
-            snapshot is { CreditUsed: { } used, CreditLimit: { } limit, CreditCurrency: { } currency })
-        {
-            y = DrawTitleRow(g, Strings.FlyoutCreditsTitle, $"{creditPercent}%", left, y, width);
-            DrawBar(g, new RectangleF(left, y, width, S(8f)), creditPercent, outlineOnly: false, paceFraction: null);
-            y += S(8f) + S(6f);
-            DrawText(g, Strings.CreditsAmount(used, limit, currency), _bodyFont, _palette.Secondary, new RectangleF(left, y, width, S(18f)));
-            y += S(18f) + S(14f);
-        }
+        // Session, week, additional limits and credits - the same sections the mini
+        // dashboard shows (see UsageSections / UsageBarRenderer).
+        var bars = Bars;
+        foreach (var section in UsageSections.Build(_state, now))
+            y = bars.DrawSection(g, section, _bodyFont, _titleFont, _bodyFont, left, y, width) + S(14f);
 
         // 7-day chart
         DrawText(g, Strings.FlyoutHistoryTitle, _titleFont, _palette.Text, new RectangleF(left, y, width / 2f, S(20f)));
@@ -506,198 +492,8 @@ internal sealed class UsageFlyout : Form
         return y + S(Pad);
     }
 
-    /// <summary>The additional limits the account reports (e.g. a model's weekly limit, see
-    /// <see cref="UsageLimitInfo"/>), each as its own section like the session and week: name
-    /// and percentage, a bar (same colours and scale ticks, no pace marker or projection -
-    /// there's no history for them) and the reset time, plus how much of the weekly allowance
-    /// it may use when the API says so. Those of the session window go under the session,
-    /// all others under the week, sorted by name.</summary>
-    private float DrawAdditionalLimits(Graphics? g, UsageSnapshot snapshot, bool sessionGroup, float left, float y, float width, DateTimeOffset now)
-    {
-        var limits = (snapshot.AdditionalLimits ?? [])
-            .Where(l => l.IsSessionGroup == sessionGroup)
-            .OrderBy(Strings.LimitLabel, StringComparer.CurrentCultureIgnoreCase);
-
-        foreach (var limit in limits)
-        {
-            y = DrawTitleRow(g, Strings.LimitLabel(limit), $"{limit.RoundedPercent}%", left, y, width);
-            DrawBar(g, new RectangleF(left, y, width, S(8f)), limit.RoundedPercent, outlineOnly: false, paceFraction: null,
-                sections: SectionsFor(limit.Group));
-            y += S(8f) + S(6f);
-
-            if (limit.ResetsAt is { } reset)
-            {
-                DrawText(g, Strings.FlyoutResetLine(reset, now), _bodyFont, _palette.Secondary, new RectangleF(left, y, width, S(18f)));
-                y += S(18f);
-            }
-            if (limit.AllowanceShareOfWeekly is { } share)
-            {
-                DrawText(g, Strings.LimitAllowanceLine(share), _bodyFont, _palette.Secondary, new RectangleF(left, y, width, S(18f)));
-                y += S(18f);
-            }
-            y += S(14f);
-        }
-        return y;
-    }
-
-    private float DrawTitleRow(Graphics? g, string title, string value, float left, float y, float width)
-    {
-        DrawText(g, title, _bodyFont, _palette.Text, new RectangleF(left, y, width - S(60f), S(20f)));
-        DrawText(g, value, _titleFont, _palette.Text, new RectangleF(left + width - S(60f), y, S(60f), S(20f)), TextFormatFlags.Right);
-        return y + S(20f) + S(6f);
-    }
-
-    private float DrawForecast(Graphics? g, UsageForecast forecast, float left, float y, float width)
-    {
-        var (text, color) = forecast.Kind switch
-        {
-            ForecastKind.Limit => (Strings.ForecastLimitInText(forecast.TimeToLimit), _palette.Text),
-            ForecastKind.ResetFirst => (Strings.ForecastResetFirstText, _palette.Secondary),
-            _ => ((string?)null, _palette.Secondary),
-        };
-        if (text is null)
-            return y;
-
-        DrawText(g, "↳ " + text, _bodyFont, color, new RectangleF(left, y, width, S(18f)));
-        return y + S(18f);
-    }
-
-    /// <summary>A large usage bar: the same track/fill/colour rules as the tray icon's (an
-    /// outline-only track before a session starts; in the greyscale palette an outlined track
-    /// and a notch above 80%), plus - for the session and the week - the pace marker as a
-    /// tick that sticks out a little above and below the bar, and the forecast's <paramref
-    /// name="projectedPercent"/> as a dimmed, hatched extension of the fill (see <see
-    /// cref="DrawProjection"/>).</summary>
-    /// <param name="sections">How many equal parts the scale ticks divide the bar into (see
-    /// <see cref="SectionsFor"/>).</param>
-    private void DrawBar(Graphics? g, RectangleF rect, int percent, bool outlineOnly, double? paceFraction, double? projectedPercent = null, int sections = 4)
-    {
-        if (g is null)
-            return;
-
-        var clamped = Math.Clamp(percent, 0, 100);
-        var radius = rect.Height / 2f;
-        using (var trackPath = RoundedRect(rect, radius))
-        {
-            // The greyscale palette brings its own track (with an outline for contrast);
-            // the standard one uses the flyout's neutral grey.
-            var greyscaleTrack = _usage.TrackOutline;
-            if (outlineOnly)
-            {
-                using var outline = new Pen(greyscaleTrack is null ? _palette.Track : _usage.NotStarted, S(1.5f));
-                g.DrawPath(outline, trackPath);
-            }
-            else
-            {
-                using var track = new SolidBrush(greyscaleTrack is null ? _palette.Track : _usage.Track);
-                g.FillPath(track, trackPath);
-                if (greyscaleTrack is { } outlineColor)
-                {
-                    using var outline = new Pen(outlineColor, S(1f));
-                    using var insetPath = RoundedRect(RectangleF.Inflate(rect, -S(0.5f), -S(0.5f)), radius - S(0.5f));
-                    g.DrawPath(outline, insetPath);
-                }
-            }
-        }
-
-        if (projectedPercent is { } projected && projected > clamped)
-            DrawProjection(g, rect, radius, projected);
-
-        if (clamped > 0)
-        {
-            var fillWidth = Math.Max(rect.Width * clamped / 100f, rect.Height);
-            var fillRect = new RectangleF(rect.X, rect.Y, Math.Min(fillWidth, rect.Width), rect.Height);
-            using var fillPath = RoundedRect(fillRect, radius);
-            using var fill = new SolidBrush(_usage.ForPercent(clamped));
-            g.FillPath(fill, fillPath);
-
-            if (_usage.MarksHighLevel && UsagePalette.IsHigh(clamped))
-            {
-                // Same notch as the tray icon: a contrasting gap just inside the fill's end.
-                var previousClip = g.Clip;
-                g.SetClip(fillPath, CombineMode.Intersect);
-                using var notch = new SolidBrush(_usage.HighNotch);
-                g.FillRectangle(notch, fillRect.Right - S(4f) - S(2f), fillRect.Y, S(2f), fillRect.Height);
-                g.Clip = previousClip;
-            }
-        }
-
-        DrawScaleTicks(g, rect, outlineOnly, sections);
-
-        if (paceFraction is { } pace)
-        {
-            var x = rect.X + rect.Width * (float)Math.Clamp(pace, 0.0, 1.0);
-            var core = S(2f);
-            var outline = S(1.5f);
-            var top = rect.Y - S(3f);
-            var height = rect.Height + S(6f);
-            using var outlineBrush = new SolidBrush(_palette.Background);
-            using var coreBrush = new SolidBrush(_palette.Text);
-            g.FillRectangle(outlineBrush, x - core / 2f - outline, top - outline, core + 2 * outline, height + 2 * outline);
-            g.FillRectangle(coreBrush, x - core / 2f, top, core, height);
-        }
-    }
-
-    /// <summary>Scale ticks dividing the bar into <paramref name="sections"/> equal parts:
-    /// thin, pixel-aligned gaps across the bar in the flyout's background colour, so they read
-    /// the same over the fill, the projection and the empty track. Thinner and fainter than
-    /// the pace marker and the greyscale palette's notch, which they mustn't be confused with.
-    /// On an outline-only bar (session not started) there's nothing to cut a gap into, so
-    /// they're drawn in the outline's colour instead.</summary>
-    private void DrawScaleTicks(Graphics g, RectangleF rect, bool outlineOnly, int sections)
-    {
-        if (sections < 2)
-            return;
-
-        var color = outlineOnly
-            ? (_usage.TrackOutline is null ? _palette.Track : _usage.NotStarted)
-            : Color.FromArgb(190, _palette.Background);
-        var width = Math.Max(1f, MathF.Round(S(1f)));
-
-        using var brush = new SolidBrush(color);
-        for (var i = 1; i < sections; i++)
-        {
-            var x = MathF.Round(rect.X + rect.Width * i / sections - width / 2f);
-            g.FillRectangle(brush, x, rect.Y, width, rect.Height);
-        }
-    }
-
-    /// <summary>Scale sections of a bar: one per hour of the session window, one per day of
-    /// the weekly window (both from <see cref="UsageWindows"/>, so they follow if a window's
-    /// length changes), quarters for everything else (credits, unknown windows).</summary>
-    private static int SectionsFor(string group) => group.ToLowerInvariant() switch
-    {
-        "session" => UsageWindows.SessionHours,
-        "weekly" => UsageWindows.WeekDays,
-        _ => 4,
-    };
-
-    /// <summary>The usage the window would reach by its reset at the current rate: drawn from
-    /// the bar's start (the real fill covers the first part) to <paramref name="projected"/>,
-    /// in the colour of the level it would reach - dimmed, with diagonal stripes, so it reads
-    /// as "not yet used" and stays apart from the fill in the greyscale palette too.</summary>
-    private void DrawProjection(Graphics g, RectangleF rect, float radius, double projected)
-    {
-        var level = Math.Clamp(projected, 0, 100);
-        var width = Math.Min(Math.Max(rect.Width * (float)(level / 100), rect.Height), rect.Width);
-        var projectionRect = new RectangleF(rect.X, rect.Y, width, rect.Height);
-        var color = _usage.ForPercent((int)Math.Ceiling(level));
-
-        using var path = RoundedRect(projectionRect, radius);
-        var previousClip = g.Clip;
-        g.SetClip(path, CombineMode.Intersect);
-
-        using (var dim = new SolidBrush(Color.FromArgb(70, color)))
-            g.FillPath(dim, path);
-
-        // Wide spacing, so the stripes stand out clearly from the solid fill next to them.
-        var spacing = S(9f);
-        using var stripe = new Pen(Color.FromArgb(170, color), S(1.5f));
-        for (var x = projectionRect.X - rect.Height; x < projectionRect.Right; x += spacing)
-            g.DrawLine(stripe, x, rect.Bottom, x + rect.Height, rect.Y);
-
-        g.Clip = previousClip;
-    }
+    /// <summary>The shared bar renderer for the current palette and scale.</summary>
+    private UsageBarRenderer Bars => new(_palette, _usage, _scale);
 
     private void DrawLegend(Graphics? g, UsageSnapshot snapshot, float right, float centerY)
     {
@@ -920,57 +716,10 @@ internal sealed class UsageFlyout : Form
         g.FillEllipse(brush, center.X - radius, center.Y - radius, 2 * radius, 2 * radius);
     }
 
-    private static void DrawText(Graphics? g, string text, Font font, Color color, RectangleF rect, TextFormatFlags extra = 0)
-    {
-        if (g is null)
-            return;
-        var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | extra;
-        if ((extra & TextFormatFlags.WordBreak) == 0)
-            flags |= TextFormatFlags.SingleLine;
-        TextRenderer.DrawText(g, text, font, Rectangle.Round(rect), color, flags);
-    }
+    private static void DrawText(Graphics? g, string text, Font font, Color color, RectangleF rect, TextFormatFlags extra = 0) =>
+        UsageBarRenderer.DrawText(g, text, font, color, rect, extra);
 
-    private static GraphicsPath RoundedRect(RectangleF rect, float radius)
-    {
-        var path = new GraphicsPath();
-        var d = Math.Min(radius * 2f, Math.Min(rect.Width, rect.Height));
-        if (d <= 0)
-        {
-            path.AddRectangle(rect);
-            return path;
-        }
-        path.AddArc(rect.X, rect.Y, d, d, 180, 90);
-        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
-        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
-        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
-
-    /// <summary>Flyout colours for the light and dark system theme, close to the Windows 11
-    /// flyouts. Usage colours themselves come from <see cref="UsagePalette"/>.</summary>
-    private sealed record Palette(Color Background, Color Text, Color Secondary, Color Track, Color Border, Color Grid, Color Pace, Color Hover)
-    {
-        public static Palette For(bool light) => light
-            ? new Palette(
-                Background: Color.FromArgb(249, 249, 249),
-                Text: Color.FromArgb(26, 26, 26),
-                Secondary: Color.FromArgb(96, 96, 96),
-                Track: Color.FromArgb(214, 214, 214),
-                Border: Color.FromArgb(214, 214, 214),
-                Grid: Color.FromArgb(229, 229, 229),
-                Pace: Color.FromArgb(70, 70, 70),
-                Hover: Color.FromArgb(234, 234, 234))
-            : new Palette(
-                Background: Color.FromArgb(43, 43, 43),
-                Text: Color.FromArgb(255, 255, 255),
-                Secondary: Color.FromArgb(178, 178, 178),
-                Track: Color.FromArgb(80, 80, 80),
-                Border: Color.FromArgb(70, 70, 70),
-                Grid: Color.FromArgb(62, 62, 62),
-                Pace: Color.FromArgb(205, 205, 205),
-                Hover: Color.FromArgb(60, 60, 60));
-    }
+    private static GraphicsPath RoundedRect(RectangleF rect, float radius) => UsageBarRenderer.RoundedRect(rect, radius);
 
     private static class NativeMethods
     {

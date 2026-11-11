@@ -1,0 +1,81 @@
+using System.Drawing;
+using Microsoft.Win32;
+
+namespace AIQuota;
+
+/// <summary>Everything the mini dashboard (<see cref="MiniDashboard"/>) remembers, saved
+/// under <c>HKCU\Software\AIQuota\MiniDashboard</c>.</summary>
+internal sealed class MiniDashboardSettings
+{
+    private const string KeyPath = @"Software\AIQuota\MiniDashboard";
+
+    public const int MinLogicalWidth = 220;
+    public const int MaxLogicalWidth = 640;
+    public const int DefaultLogicalWidth = 300;
+
+    /// <summary>The opacity steps offered in the dashboard's menu, in percent.</summary>
+    public static readonly int[] OpacitySteps = [100, 90, 75, 60, 45, 30];
+
+    /// <summary>Whether the window was open when the app last ran - it reopens on start.</summary>
+    public bool IsOpen { get; set; }
+
+    /// <summary>Top-left corner in screen pixels; null until the window was first placed.</summary>
+    public Point? Location { get; set; }
+
+    /// <summary>Width in 96-DPI logical pixels, so it keeps its size across monitors with
+    /// different scaling. The height always follows the content.</summary>
+    public int LogicalWidth { get; set; } = DefaultLogicalWidth;
+
+    public bool Expanded { get; set; }
+
+    /// <summary>Keys of the bars to show (see <see cref="UsageSection.Key"/>), e.g. "session",
+    /// "week", "credits" or "limit:weekly_scoped:opus". Keys of bars that aren't currently
+    /// reported stay selected, so they come back when the bar does.</summary>
+    public List<string> Bars { get; set; } = [UsageSections.SessionKey, UsageSections.WeekKey];
+
+    public int OpacityPercent { get; set; } = 100;
+
+    public bool TopMost { get; set; } = true;
+
+    /// <summary>Moving and resizing are disabled.</summary>
+    public bool Locked { get; set; }
+
+    public static MiniDashboardSettings Load()
+    {
+        var settings = new MiniDashboardSettings();
+        using var key = Registry.CurrentUser.OpenSubKey(KeyPath, writable: false);
+        if (key is null)
+            return settings;
+
+        settings.IsOpen = key.GetValue("Open") is int open && open != 0;
+        if (key.GetValue("X") is int x && key.GetValue("Y") is int y)
+            settings.Location = new Point(x, y);
+        if (key.GetValue("Width") is int width)
+            settings.LogicalWidth = Math.Clamp(width, MinLogicalWidth, MaxLogicalWidth);
+        settings.Expanded = key.GetValue("Expanded") is int expanded && expanded != 0;
+        if (key.GetValue("Bars") is string[] bars && bars.Length > 0)
+            settings.Bars = [.. bars.Where(b => !string.IsNullOrWhiteSpace(b)).Distinct()];
+        if (key.GetValue("Opacity") is int opacity && OpacitySteps.Contains(opacity))
+            settings.OpacityPercent = opacity;
+        settings.TopMost = key.GetValue("TopMost") is not int topMost || topMost != 0;
+        settings.Locked = key.GetValue("Locked") is int locked && locked != 0;
+        return settings;
+    }
+
+    public void Save()
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(KeyPath, writable: true);
+        key.SetValue("Open", IsOpen ? 1 : 0, RegistryValueKind.DWord);
+        if (Location is { } location)
+        {
+            key.SetValue("X", location.X, RegistryValueKind.DWord);
+            key.SetValue("Y", location.Y, RegistryValueKind.DWord);
+        }
+        key.SetValue("Width", LogicalWidth, RegistryValueKind.DWord);
+        key.SetValue("Expanded", Expanded ? 1 : 0, RegistryValueKind.DWord);
+        key.SetValue("Bars", Bars.ToArray(), RegistryValueKind.MultiString);
+        key.SetValue("Opacity", OpacityPercent, RegistryValueKind.DWord);
+        key.SetValue("TopMost", TopMost ? 1 : 0, RegistryValueKind.DWord);
+        key.SetValue("Locked", Locked ? 1 : 0, RegistryValueKind.DWord);
+    }
+}
