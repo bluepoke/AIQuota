@@ -455,7 +455,7 @@ internal sealed class UsageFlyout : Form
         y = DrawTitleRow(g, Strings.FlyoutSessionTitle, $"{snapshot.SessionPercent}%", left, y, width);
         DrawBar(g, new RectangleF(left, y, width, S(8f)), snapshot.SessionPercent, _state.SessionNotStarted,
             paceFraction: _state.ShowPaceMarker ? sessionPace : null,
-            projectedPercent: _state.SessionForecast.ProjectedPercent);
+            projectedPercent: _state.SessionForecast.ProjectedPercent, sections: UsageWindows.SessionHours);
         y += S(8f) + S(6f);
         var sessionDetail = _state.SessionNotStarted || snapshot.SessionResetsAt is not { } sessionReset
             ? Strings.FlyoutSessionNotStarted
@@ -472,7 +472,7 @@ internal sealed class UsageFlyout : Form
         y = DrawTitleRow(g, Strings.FlyoutWeekTitle, $"{snapshot.WeeklyPercent}%", left, y, width);
         DrawBar(g, new RectangleF(left, y, width, S(8f)), snapshot.WeeklyPercent, outlineOnly: false,
             paceFraction: _state.ShowPaceMarker ? pace : null,
-            projectedPercent: _state.WeeklyForecast.ProjectedPercent);
+            projectedPercent: _state.WeeklyForecast.ProjectedPercent, sections: UsageWindows.WeekDays);
         y += S(8f) + S(6f);
         if (snapshot.WeeklyResetsAt is { } weeklyReset)
         {
@@ -521,7 +521,8 @@ internal sealed class UsageFlyout : Form
         foreach (var limit in limits)
         {
             y = DrawTitleRow(g, Strings.LimitLabel(limit), $"{limit.RoundedPercent}%", left, y, width);
-            DrawBar(g, new RectangleF(left, y, width, S(8f)), limit.RoundedPercent, outlineOnly: false, paceFraction: null);
+            DrawBar(g, new RectangleF(left, y, width, S(8f)), limit.RoundedPercent, outlineOnly: false, paceFraction: null,
+                sections: SectionsFor(limit.Group));
             y += S(8f) + S(6f);
 
             if (limit.ResetsAt is { } reset)
@@ -567,7 +568,9 @@ internal sealed class UsageFlyout : Form
     /// tick that sticks out a little above and below the bar, and the forecast's <paramref
     /// name="projectedPercent"/> as a dimmed, hatched extension of the fill (see <see
     /// cref="DrawProjection"/>).</summary>
-    private void DrawBar(Graphics? g, RectangleF rect, int percent, bool outlineOnly, double? paceFraction, double? projectedPercent = null)
+    /// <param name="sections">How many equal parts the scale ticks divide the bar into (see
+    /// <see cref="SectionsFor"/>).</param>
+    private void DrawBar(Graphics? g, RectangleF rect, int percent, bool outlineOnly, double? paceFraction, double? projectedPercent = null, int sections = 4)
     {
         if (g is null)
             return;
@@ -619,7 +622,7 @@ internal sealed class UsageFlyout : Form
             }
         }
 
-        DrawScaleTicks(g, rect, outlineOnly);
+        DrawScaleTicks(g, rect, outlineOnly, sections);
 
         if (paceFraction is { } pace)
         {
@@ -635,26 +638,39 @@ internal sealed class UsageFlyout : Form
         }
     }
 
-    /// <summary>Scale ticks at 25%, 50% and 75%: thin, pixel-aligned gaps across the bar in
-    /// the flyout's background colour, so they read the same over the fill, the projection
-    /// and the empty track. Thinner and fainter than the pace marker and the greyscale
-    /// palette's notch, which they mustn't be confused with. On an outline-only bar (session
-    /// not started) there's nothing to cut a gap into, so they're drawn in the outline's
-    /// colour instead.</summary>
-    private void DrawScaleTicks(Graphics g, RectangleF rect, bool outlineOnly)
+    /// <summary>Scale ticks dividing the bar into <paramref name="sections"/> equal parts:
+    /// thin, pixel-aligned gaps across the bar in the flyout's background colour, so they read
+    /// the same over the fill, the projection and the empty track. Thinner and fainter than
+    /// the pace marker and the greyscale palette's notch, which they mustn't be confused with.
+    /// On an outline-only bar (session not started) there's nothing to cut a gap into, so
+    /// they're drawn in the outline's colour instead.</summary>
+    private void DrawScaleTicks(Graphics g, RectangleF rect, bool outlineOnly, int sections)
     {
+        if (sections < 2)
+            return;
+
         var color = outlineOnly
             ? (_usage.TrackOutline is null ? _palette.Track : _usage.NotStarted)
             : Color.FromArgb(190, _palette.Background);
         var width = Math.Max(1f, MathF.Round(S(1f)));
 
         using var brush = new SolidBrush(color);
-        foreach (var fraction in new[] { 0.25f, 0.5f, 0.75f })
+        for (var i = 1; i < sections; i++)
         {
-            var x = MathF.Round(rect.X + rect.Width * fraction - width / 2f);
+            var x = MathF.Round(rect.X + rect.Width * i / sections - width / 2f);
             g.FillRectangle(brush, x, rect.Y, width, rect.Height);
         }
     }
+
+    /// <summary>Scale sections of a bar: one per hour of the session window, one per day of
+    /// the weekly window (both from <see cref="UsageWindows"/>, so they follow if a window's
+    /// length changes), quarters for everything else (credits, unknown windows).</summary>
+    private static int SectionsFor(string group) => group.ToLowerInvariant() switch
+    {
+        "session" => UsageWindows.SessionHours,
+        "weekly" => UsageWindows.WeekDays,
+        _ => 4,
+    };
 
     /// <summary>The usage the window would reach by its reset at the current rate: drawn from
     /// the bar's start (the real fill covers the first part) to <paramref name="projected"/>,

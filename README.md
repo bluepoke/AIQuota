@@ -46,9 +46,10 @@ Left-click the icon for a flyout next to the taskbar, like the Windows volume an
 flyouts. It shows:
 
 - your account, when the data was last updated, and a refresh button
-- the session, week and (when your plan has them) credit usage as large bars with scale
-  ticks at 25%, 50% and 75%, and the reset time as both clock time and countdown
-  (`Resets 14:30 · in 1.6h`)
+- the session, week and (when your plan has them) credit usage as large bars, and the
+  reset time as both clock time and countdown (`Resets 14:30 · in 1.6h`). Scale ticks
+  divide the session bar into its 5 hours and the week bar into its 7 days (so 20% and
+  about 14% of the quota each), and the credit bar into quarters
 - a [pace marker](#weekly-pace-marker) on the week bar, and one on the session bar for an
   even spread over the 5 hours (`Resets 14:30 · in 1.6h · pace 68%`; not shown before a
   session starts)
