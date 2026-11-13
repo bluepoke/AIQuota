@@ -33,7 +33,8 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly System.Windows.Forms.Timer _newVersionCheckTimer;
-    private readonly ToolStripMenuItem _userItem;
+    /// <summary>"Logged in as …" with the account list, add, rename and remove (#13).</summary>
+    private readonly ToolStripMenuItem _accountMenu;
     private readonly ToolStripMenuItem _sessionItem;
     private readonly ToolStripMenuItem _sessionForecastItem;
     private readonly ToolStripMenuItem _weeklyItem;
@@ -41,7 +42,6 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _creditsItem;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _loginItem;
-    private readonly ToolStripMenuItem _logoutItem;
     private readonly ToolStripMenuItem _startupItem;
     private readonly ToolStripMenuItem _showSessionRingItem;
     private readonly ToolStripMenuItem _showWeeklyPaceItem;
@@ -74,23 +74,48 @@ public sealed class UsageTrayContext : ApplicationContext
     private UsageHeatmap? _heatmap;
     private readonly MiniDashboardSettings _miniDashboardSettings = MiniDashboardSettings.Load();
 
-    private bool _sessionWarningShown;
-    private bool _weeklyWarningShown;
+    /// <summary>Which usage notifications have been shown for one account, so a threshold
+    /// already notified isn't notified again - and doesn't carry over to another account.</summary>
+    private sealed class AlertState
+    {
+        public bool SessionWarningShown;
+        public bool WeeklyWarningShown;
+        public bool SessionForecastWarningShown;
 
-    /// <summary>Keys of the additional limits (<see cref="UsageLimitInfo"/>) whose warning
-    /// has been shown, until they drop below the threshold again.</summary>
-    private readonly HashSet<string> _limitWarningsShown = [];
+        /// <summary>Keys of the additional limits (<see cref="UsageLimitInfo"/>) whose warning
+        /// has been shown, until they drop below the threshold again.</summary>
+        public readonly HashSet<string> LimitWarningsShown = [];
+    }
+
+    /// <summary>The saved accounts (#13), oldest first, and the one that's shown and polled.
+    /// Only the active account is ever fetched.</summary>
+    private readonly List<SavedAccount> _accounts;
+    private SavedAccount? _active;
+
+    /// <summary>Incremented on every account switch: a fetch that started for the previous
+    /// account is discarded when it completes (see <see cref="RefreshAsync"/>).</summary>
+    private int _generation;
+
+    private readonly Dictionary<string, AlertState> _alertStates = [];
+    /// <summary>The active account's notification state.</summary>
+    private AlertState _alerts = new();
+
+    /// <summary>The last fetched usage per account (this run), shown at once on switching
+    /// back to it until the refresh completes.</summary>
+    private readonly Dictionary<string, UsageSnapshot> _lastSnapshots = [];
+
+    /// <summary>Accounts whose profile (label, ID) has been fetched this run.</summary>
+    private readonly HashSet<string> _resolvedAccounts = [];
 
     /// <summary>Context menu lines of the additional limits, rebuilt on every refresh.</summary>
     private readonly List<ToolStripMenuItem> _limitItems = [];
-    private bool _sessionForecastWarningShown;
     private bool _refreshInProgress;
+    private bool _loginInProgress;
     private bool _newVersionCheckInProgress;
     private bool _updateInProgress;
-    private string? _cachedAccountName;
 
-    /// <summary>Stable ID of the signed-in account (see <see cref="AccountInfo.Id"/>), keying
-    /// the usage history; null until the profile has been fetched successfully.</summary>
+    /// <summary>Stable ID of the active account (see <see cref="AccountInfo.Id"/>), keying
+    /// the usage history; null until its profile has been fetched successfully.</summary>
     private string? _accountId;
 
     private UsageForecast _sessionForecast = UsageForecast.None;
@@ -113,6 +138,16 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private bool HasUpdate => _availableUpdate is not null;
 
+    /// <summary>The active account has a token, i.e. usage can be fetched.</summary>
+    private bool IsLoggedIn => _active is { HasToken: true };
+
+    /// <summary>With more than one account, the account's name is shown in the tooltip,
+    /// notifications and the mini dashboard, and the flyout offers switching.</summary>
+    private bool MultipleAccounts => _accounts.Count > 1;
+
+    /// <summary>The active account's short name or label.</summary>
+    private string ActiveName => _active?.DisplayName ?? Strings.AccountUnnamed;
+
     /// <summary>Whether the tray icon, flyout and deck keys use the greyscale palette.</summary>
     private bool GreyscaleActive => AccessibilityModePreference.IsActive(_accessibilityModeEnabled);
 
@@ -134,7 +169,19 @@ public sealed class UsageTrayContext : ApplicationContext
         _uiContext = SynchronizationContext.Current!;
         _usageApi = new UsageApiClient(_oauth);
 
-        _userItem = new ToolStripMenuItem { Enabled = false, Visible = false };
+        AccountStore.MigrateLegacyToken();
+        _accounts = AccountStore.LoadAll();
+        var activeKey = AccountStore.LoadActiveKey();
+        _active = _accounts.FirstOrDefault(a => a.Key == activeKey)
+            ?? _accounts.FirstOrDefault(a => a.HasToken)
+            ?? _accounts.FirstOrDefault();
+        if (_active?.Key != activeKey)
+            AccountStore.SaveActiveKey(_active?.Key);
+
+        _accountMenu = new ToolStripMenuItem { Visible = false };
+        // Rebuilt whenever it opens rather than on every change: a change can come from one of
+        // its own items' Click, and that item must not be disposed while its handler runs.
+        _accountMenu.DropDownOpening += (_, _) => RebuildAccountMenuItems();
         _sessionItem = new ToolStripMenuItem { Enabled = false };
         _sessionForecastItem = new ToolStripMenuItem { Enabled = false, Visible = false };
         _weeklyItem = new ToolStripMenuItem { Enabled = false };
@@ -142,9 +189,8 @@ public sealed class UsageTrayContext : ApplicationContext
         _creditsItem = new ToolStripMenuItem { Enabled = false, Visible = false };
         _statusItem = new ToolStripMenuItem { Enabled = false };
         _loginItem = new ToolStripMenuItem();
-        _loginItem.Click += OnLoginClicked;
-        _logoutItem = new ToolStripMenuItem { Visible = false };
-        _logoutItem.Click += OnLogoutClicked;
+        // The first login, or a new one for the active account if its sign-in has expired.
+        _loginItem.Click += async (_, _) => await LoginAsync(_active);
         _startupItem = new ToolStripMenuItem { CheckOnClick = false, Checked = StartupManager.IsEnabled() };
         _startupItem.Click += OnToggleStartup;
         _showSessionRingItem = new ToolStripMenuItem { CheckOnClick = false, Checked = SessionRingPreference.IsEnabled() };
@@ -217,7 +263,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _historyMenu.DropDownItems.Add(_historyClearItem);
 
         var menu = new ContextMenuStrip();
-        menu.Items.Add(_userItem);
+        menu.Items.Add(_accountMenu);
         menu.Items.Add(_sessionItem);
         menu.Items.Add(_sessionForecastItem);
         menu.Items.Add(_weeklyItem);
@@ -228,7 +274,6 @@ public sealed class UsageTrayContext : ApplicationContext
         menu.Items.Add(_refreshItem);
         menu.Items.Add(_miniDashboardItem);
         menu.Items.Add(_loginItem);
-        menu.Items.Add(_logoutItem);
         menu.Items.Add(_historyMenu);
         menu.Items.Add(_settingsMenu);
         menu.Items.Add(_aboutMenu);
@@ -265,7 +310,7 @@ public sealed class UsageTrayContext : ApplicationContext
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnSystemPreferenceChanged;
 
         ApplyStaticMenuTexts();
-        UpdateLoginMenuState();
+        LoadActiveAccount();
         if (_streamDockItem.Checked)
             StartStreamDockBridge();
         if (_miniDashboardSettings.IsOpen)
@@ -276,13 +321,11 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private void ApplyStaticMenuTexts()
     {
-        if (_cachedAccountName is not null)
-            _userItem.Text = Strings.UserLabel(_cachedAccountName);
+        UpdateAccountMenu();
         _sessionItem.Text = Strings.MenuSessionEmpty;
         _weeklyItem.Text = Strings.MenuWeeklyEmpty;
         _statusItem.Text = Strings.MenuNotLoggedIn;
-        _loginItem.Text = Strings.MenuLogin;
-        _logoutItem.Text = Strings.MenuLogout;
+        UpdateLoginMenuState();
         _startupItem.Text = Strings.MenuStartup;
         _showSessionRingItem.Text = Strings.MenuShowSessionRing;
         _showWeeklyPaceItem.Text = Strings.MenuShowWeeklyPace;
@@ -311,52 +354,342 @@ public sealed class UsageTrayContext : ApplicationContext
         SetNotifyIconText(Strings.TooltipNotLoggedIn);
     }
 
-    private async void OnLoginClicked(object? sender, EventArgs e)
+    // ---------------------------------------------------------------- accounts (#13)
+
+    private enum LoginLaunch { Browser, CopyLink, Cancel }
+
+    /// <summary>
+    /// Signs in through the browser and stores the token with the matching saved account:
+    /// the one with the same account ID if it's already in the list (then just its token is
+    /// renewed), else <paramref name="target"/> (a new login for an account whose sign-in
+    /// expired), else a new account. That account then becomes the active one.
+    /// </summary>
+    /// <param name="target">The account to log in again; null for the first login or
+    /// "Add account…".</param>
+    private async Task LoginAsync(SavedAccount? target)
     {
-        _loginItem.Enabled = false;
+        if (_loginInProgress)
+            return;
+
+        // With another account saved, the browser may still be signed in to claude.ai with
+        // that one - and its session decides which account signs in - so say how to pick.
+        var otherAccounts = _accounts.Count(a => a != target);
+        var launch = otherAccounts == 0 ? LoginLaunch.Browser
+            : AskHowToOpenLogin(target is null ? Strings.AddAccountHeading : Strings.LoginAgainHeading(target.DisplayName ?? Strings.AccountUnnamed));
+        if (launch == LoginLaunch.Cancel)
+            return;
+
+        _loginInProgress = true;
+        UpdateLoginMenuState();
+        var previousTooltip = _tooltipCandidates;
+        SetNotifyIconText(launch == LoginLaunch.CopyLink ? Strings.TooltipWaitingForLoginLink : Strings.TooltipLoggingIn);
+        var succeeded = false;
         try
         {
-            SetNotifyIconText(Strings.TooltipLoggingIn);
-            await _oauth.LoginAsync(CancellationToken.None);
-            UpdateLoginMenuState();
-            await RefreshAsync();
+            Action<string>? open = launch == LoginLaunch.CopyLink ? url => Clipboard.SetText(url) : null;
+            var tokens = await _oauth.LoginAsync(open, CancellationToken.None);
+            var info = await _usageApi.FetchAccountWithTokenAsync(tokens.AccessToken, CancellationToken.None);
+
+            var account = PickAccountForLogin(target, info, out var message);
+            TokenStore.Save(account.Key, tokens);
+            if (info is not null)
+            {
+                _resolvedAccounts.Add(account.Key);
+                account = ApplyAccountInfo(account, info);
+            }
+
+            if (account != _active)
+                ActivateAccount(account);
+            else
+                LoadActiveAccount();
+            UpdateFlyout();
+            succeeded = true;
+
+            if (message is not null)
+                MessageBox.Show(message, Strings.AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
+            SetNotifyIconText(previousTooltip);
             MessageBox.Show(Strings.LoginFailed(ex.Message), Strings.AppTitle,
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
-            _loginItem.Enabled = true;
+            _loginInProgress = false;
+            UpdateLoginMenuState();
         }
+
+        if (succeeded)
+            await RefreshAsync();
     }
 
-    private async void OnLogoutClicked(object? sender, EventArgs e)
+    /// <summary>Asks how to open the sign-in page while another account is saved: in the
+    /// browser (signs in whichever account is signed in on claude.ai there), or copy the link
+    /// for a private window.</summary>
+    private static LoginLaunch AskHowToOpenLogin(string heading)
     {
-        _oauth.Logout();
-        ForgetAccount();
+        var openButton = new TaskDialogButton(Strings.AddAccountOpenBrowser);
+        var copyButton = new TaskDialogButton(Strings.AddAccountCopyLink);
+        var page = new TaskDialogPage
+        {
+            Caption = Strings.AppTitle,
+            Heading = heading,
+            Text = Strings.AddAccountText,
+            Icon = TaskDialogIcon.Information,
+            Buttons = { openButton, copyButton, TaskDialogButton.Cancel },
+            DefaultButton = openButton,
+        };
+        var result = TaskDialog.ShowDialog(page, TaskDialogStartupLocation.CenterScreen);
+        return result == openButton ? LoginLaunch.Browser
+            : result == copyButton ? LoginLaunch.CopyLink
+            : LoginLaunch.Cancel;
+    }
+
+    /// <summary>Which saved account a fresh login belongs to (see <see cref="LoginAsync"/>),
+    /// creating a new one if needed; <paramref name="message"/> tells the user when it isn't
+    /// the one they presumably meant.</summary>
+    private SavedAccount PickAccountForLogin(SavedAccount? target, AccountInfo? info, out string? message)
+    {
+        message = null;
+        var signedInName = info?.DisplayLabel ?? Strings.AccountUnnamed;
+        if (info?.Id is { } id && _accounts.FirstOrDefault(a => a.AccountId == id) is { } existing)
+        {
+            if (target is null)
+                message = Strings.LoginAccountAlreadyAdded(existing.DisplayName ?? signedInName);
+            else if (existing != target)
+                message = Strings.LoginDifferentExistingAccount(existing.DisplayName ?? signedInName, target.DisplayName ?? Strings.AccountUnnamed);
+            return existing;
+        }
+
+        // A new login for an expired account - unless it's provably a different account.
+        if (target is not null && (target.AccountId is null || info?.Id is null))
+            return target;
+
+        if (target is not null)
+            message = Strings.LoginDifferentAccount(signedInName, target.DisplayName ?? Strings.AccountUnnamed);
+        var created = AccountStore.Create();
+        _accounts.Add(created);
+        return created;
+    }
+
+    /// <summary>Stores a fetched profile with the account. If another saved account turns out
+    /// to be the same Claude account (e.g. the migrated token, added again), the two are
+    /// merged: the other one keeps this one's newer token. Returns the account that remains.</summary>
+    private SavedAccount ApplyAccountInfo(SavedAccount account, AccountInfo info)
+    {
+        if (info.Id is { } id && _accounts.FirstOrDefault(a => a != account && a.AccountId == id) is { } twin)
+        {
+            if (TokenStore.Load(account.Key) is { } tokens)
+                TokenStore.Save(twin.Key, tokens);
+            twin.ShortName ??= account.ShortName;
+            var wasActive = account == _active;
+            RemoveAccountEntry(account);
+            _resolvedAccounts.Add(twin.Key);
+            if (wasActive)
+            {
+                // Still the same Claude account, so no generation change: a running fetch
+                // for it may complete.
+                _active = twin;
+                AccountStore.SaveActiveKey(twin.Key);
+                _alerts = AlertStateFor(twin);
+            }
+            account = twin;
+        }
+
+        account.AccountId = info.Id ?? account.AccountId;
+        account.Label = info.DisplayLabel ?? account.Label;
+        AccountStore.Save(account);
+
+        if (account == _active)
+        {
+            _accountId = account.AccountId;
+            _history.SetAccount(_accountId);
+        }
+        UpdateAccountMenu();
+        return account;
+    }
+
+    /// <summary>Makes <paramref name="account"/> the active one; a fetch still running for
+    /// the previous one is discarded.</summary>
+    private void ActivateAccount(SavedAccount? account)
+    {
+        _active = account;
+        AccountStore.SaveActiveKey(account?.Key);
+        _generation++;
+        LoadActiveAccount();
+    }
+
+    /// <summary>Shows the active account: its history, forecasts and notification state, and
+    /// its last known usage until the next refresh - nothing of the previous account stays
+    /// visible.</summary>
+    private void LoadActiveAccount()
+    {
+        _alerts = _active is null ? new AlertState() : AlertStateFor(_active);
+        _accountId = _active?.AccountId;
+        _history.SetAccount(_accountId);
+        ShowLastKnownUsage();
+        UpdateAccountMenu();
         UpdateLoginMenuState();
+    }
+
+    private AlertState AlertStateFor(SavedAccount account)
+    {
+        if (!_alertStates.TryGetValue(account.Key, out var state))
+            _alertStates[account.Key] = state = new AlertState();
+        return state;
+    }
+
+    /// <summary>The usage fetched last for the active account this run, else its newest
+    /// history record (a window whose reset has passed counts as empty again), marked by
+    /// its time in the status line; the refresh that follows replaces it.</summary>
+    private void ShowLastKnownUsage()
+    {
+        if (!IsLoggedIn)
+        {
+            ApplyResult(new UsageFetchResult(UsageFetchStatus.NotLoggedIn, null));
+            return;
+        }
+
+        if ((_lastSnapshots.GetValueOrDefault(_active!.Key) ?? SnapshotFromHistory()) is { } snapshot)
+        {
+            ApplySnapshot(snapshot, live: false);
+            return;
+        }
+
+        ClearUsageDisplay();
+        _currentIconKind = IconKind.Unavailable;
+        SetIcon(TrayIconFactory.CreateUnavailableIcon(TrayPalette, HasUpdate));
+        _statusItem.Text = Strings.FlyoutRefreshing;
+        SetNotifyIconText(Strings.TooltipLoadingAccount(ActiveName));
+    }
+
+    private UsageSnapshot? SnapshotFromHistory()
+    {
+        if (_history.Records is not [.., var last])
+            return null;
+
+        var now = DateTimeOffset.Now;
+        var sessionOver = last.SessionResetsAt is { } sessionReset && sessionReset <= now;
+        var weekOver = last.WeekResetsAt is { } weekReset && weekReset <= now;
+        var session = sessionOver ? 0 : Math.Clamp(last.Session, 0, 100);
+        var week = weekOver ? 0 : Math.Clamp(last.Week, 0, 100);
+        return new UsageSnapshot(
+            (int)Math.Round(session), (int)Math.Round(week),
+            sessionOver ? null : last.SessionResetsAt, weekOver ? null : last.WeekResetsAt,
+            last.Time, last.CreditUsed, last.CreditLimit, last.CreditCurrency, session, week);
+    }
+
+    private async Task SwitchAccountAsync(SavedAccount account)
+    {
+        if (account == _active && account.HasToken)
+            return;
+        if (account != _active)
+        {
+            ActivateAccount(account);
+            UpdateFlyout();
+        }
+
+        if (account.HasToken)
+            await RefreshAsync();
+        else
+            await LoginAsync(account);
+    }
+
+    private void OnRenameAccountClicked()
+    {
+        if (_active is not { } account)
+            return;
+        if (!RenameAccountDialog.Ask(account.Label ?? Strings.AccountUnnamed, account.ShortName, out var shortName))
+            return;
+
+        account.ShortName = shortName;
+        AccountStore.Save(account);
+        UpdateAccountMenu();
+        if (_currentIconKind == IconKind.Usage && _lastUsageSnapshot is { } snapshot)
+            ApplyUsageTooltip(snapshot);
+        UpdateFlyout();
+    }
+
+    /// <summary>Removes the active account (its token; the history stays) and switches to
+    /// the next one that's signed in, else the next one, else "not logged in".</summary>
+    private async Task RemoveActiveAccountAsync()
+    {
+        if (_active is not { } account)
+            return;
+        var answer = MessageBox.Show(Strings.ConfirmRemoveAccount(ActiveName), Strings.AppTitle,
+            MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes)
+            return;
+
+        RemoveAccountEntry(account);
+        ActivateAccount(_accounts.FirstOrDefault(a => a.HasToken) ?? _accounts.FirstOrDefault());
+        UpdateFlyout();
         await RefreshAsync();
     }
 
-    /// <summary>Drops everything tied to the signed-in account: its label, and the loaded
-    /// usage history and forecast. The history files themselves stay on disk (see
-    /// <see cref="OnClearHistoryClicked"/> to delete them).</summary>
-    private void ForgetAccount()
+    private void RemoveAccountEntry(SavedAccount account)
     {
-        _cachedAccountName = null;
-        _accountId = null;
-        _userItem.Visible = false;
-        _history.SetAccount(null);
-        ResetForecasts();
+        AccountStore.Remove(account.Key);
+        _accounts.Remove(account);
+        _alertStates.Remove(account.Key);
+        _lastSnapshots.Remove(account.Key);
+        _resolvedAccounts.Remove(account.Key);
+        _miniDashboardSettings.RemoveAccount(account.Key);
     }
+
+    /// <summary>The "Logged in as …" entry; its submenu is rebuilt when it opens.</summary>
+    private void UpdateAccountMenu()
+    {
+        _accountMenu.Visible = _active is not null;
+        if (_active is not null)
+            _accountMenu.Text = _active.HasToken ? Strings.UserLabel(ActiveName) : ActiveName + Strings.AccountLoginRequiredSuffix;
+        if (!_accountMenu.HasDropDownItems)
+            RebuildAccountMenuItems();
+    }
+
+    private void RebuildAccountMenuItems()
+    {
+        foreach (var item in _accountMenu.DropDownItems.Cast<ToolStripItem>().ToList())
+            item.Dispose();
+        _accountMenu.DropDownItems.Clear();
+        _accountMenu.DropDownItems.AddRange([.. CreateAccountItems(withManagement: true)]);
+    }
+
+    /// <summary>The account list (active one checked, a click switches) and "Add account…" -
+    /// for the tray menu, the flyout's ▾ button and the mini dashboard's menu. <paramref
+    /// name="withManagement"/> adds "Rename…" and "Remove active account…".</summary>
+    private List<ToolStripItem> CreateAccountItems(bool withManagement)
+    {
+        var items = new List<ToolStripItem>();
+        foreach (var account in _accounts)
+        {
+            var name = account is { ShortName: { } shortName, Label: { } label }
+                ? $"{shortName} – {label}"
+                : account.DisplayName ?? Strings.AccountUnnamed;
+            if (!account.HasToken)
+                name += Strings.AccountLoginRequiredSuffix;
+            var item = new ToolStripMenuItem(name) { Checked = account == _active, Enabled = !_loginInProgress };
+            item.Click += async (_, _) => await SwitchAccountAsync(account);
+            items.Add(item);
+        }
+
+        items.Add(new ToolStripSeparator());
+        items.Add(new ToolStripMenuItem(Strings.MenuAddAccount, null, async (_, _) => await LoginAsync(null)) { Enabled = !_loginInProgress });
+        if (withManagement)
+        {
+            items.Add(new ToolStripMenuItem(Strings.MenuRenameAccount, null, (_, _) => OnRenameAccountClicked()) { Enabled = _active is not null });
+            items.Add(new ToolStripMenuItem(Strings.MenuRemoveAccount, null, async (_, _) => await RemoveActiveAccountAsync()) { Enabled = _active is not null && !_loginInProgress });
+        }
+        return items;
+    }
+
+    // ---------------------------------------------------------------- history, menus
 
     private void ResetForecasts()
     {
         _sessionForecast = UsageForecast.None;
         _weeklyForecast = UsageForecast.None;
-        _sessionForecastWarningShown = false;
         ApplyForecastMenuTexts();
     }
 
@@ -437,8 +770,8 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private HeatmapState BuildHeatmapState() => new(
         Days: _history.DailyUsage,
-        LoggedIn: _oauth.IsLoggedIn,
-        AccountLabel: _cachedAccountName,
+        LoggedIn: IsLoggedIn,
+        AccountLabel: _active?.DisplayName,
         Greyscale: GreyscaleActive);
 
     private void OnClearHistoryClicked(object? sender, EventArgs e)
@@ -450,6 +783,7 @@ public sealed class UsageTrayContext : ApplicationContext
 
         _history.Clear();
         ResetForecasts();
+        _alerts.SessionForecastWarningShown = false;
         if (_currentIconKind == IconKind.Usage && _lastUsageSnapshot is { } snapshot)
             ApplyUsageTooltip(snapshot);
         UpdateFlyout();
@@ -484,7 +818,10 @@ public sealed class UsageTrayContext : ApplicationContext
         Flyout.Toggle(Cursor.Position);
     }
 
-    private UsageFlyout Flyout => _flyout ??= new UsageFlyout(BuildFlyoutState, RefreshAsync, ShowMiniDashboard, ShowHeatmap);
+    private UsageFlyout Flyout => _flyout ??= new UsageFlyout(BuildFlyoutState, RefreshAsync, ShowMiniDashboard, ShowHeatmap)
+    {
+        CreateAccountItems = () => CreateAccountItems(withManagement: false),
+    };
 
     /// <summary>Shows the mini dashboard (see <see cref="MiniDashboard"/>) and remembers that
     /// it's open, so it reopens on the next start.</summary>
@@ -493,7 +830,10 @@ public sealed class UsageTrayContext : ApplicationContext
         _miniDashboard ??= new MiniDashboard(BuildFlyoutState, RefreshAsync,
             openFlyout: () => Flyout.Open(Cursor.Position),
             close: CloseMiniDashboard,
-            _miniDashboardSettings, settings => settings.Save());
+            _miniDashboardSettings, settings => settings.Save())
+        {
+            CreateAccountItems = () => CreateAccountItems(withManagement: false),
+        };
         if (!_miniDashboard.Visible)
             _miniDashboard.ShowDashboard();
         _miniDashboardSettings.IsOpen = true;
@@ -560,8 +900,8 @@ public sealed class UsageTrayContext : ApplicationContext
     }
 
     private FlyoutState BuildFlyoutState() => new(
-        LoggedIn: _oauth.IsLoggedIn,
-        AccountLabel: _cachedAccountName,
+        LoggedIn: IsLoggedIn,
+        AccountLabel: _active?.DisplayName,
         StatusText: _statusItem.Text ?? "",
         IsRefreshing: _refreshInProgress,
         Snapshot: _lastUsageSnapshot,
@@ -572,7 +912,9 @@ public sealed class UsageTrayContext : ApplicationContext
         WeeklyForecast: _weeklyForecast,
         History: _history.Records,
         Greyscale: GreyscaleActive,
-        HasError: _currentIconKind == IconKind.Warning);
+        HasError: _currentIconKind == IconKind.Warning,
+        AccountKey: _active?.Key,
+        CanSwitchAccount: MultipleAccounts);
 
     private void OnToggleSessionRing(object? sender, EventArgs e)
     {
@@ -721,13 +1063,17 @@ public sealed class UsageTrayContext : ApplicationContext
         }
     }
 
+    /// <summary>"Log in…" while there's no account, "Log in again as …" while the active
+    /// account's sign-in has expired; hidden otherwise.</summary>
     private void UpdateLoginMenuState()
     {
-        var loggedIn = _oauth.IsLoggedIn;
-        _loginItem.Visible = !loggedIn;
-        _logoutItem.Visible = loggedIn;
+        _loginItem.Visible = !IsLoggedIn;
+        _loginItem.Text = _active is null ? Strings.MenuLogin : Strings.MenuLoginAgain(ActiveName);
+        _loginItem.Enabled = !_loginInProgress;
     }
 
+    /// <summary>Fetches the active account's usage. If the account is switched while a fetch
+    /// runs, that fetch's result is discarded and the new account is fetched right after.</summary>
     private async Task RefreshAsync()
     {
         if (_refreshInProgress)
@@ -735,24 +1081,13 @@ public sealed class UsageTrayContext : ApplicationContext
         _refreshInProgress = true;
         try
         {
-            if (_hasUsageSnapshot)
+            int generation;
+            do
             {
-                _currentIconKind = IconKind.Refreshing;
-                SetIcon(TrayIconFactory.CreateRefreshingIcon(TrayPalette, _lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction));
+                generation = _generation;
+                await RefreshOnceAsync(generation);
             }
-            UpdateFlyout();
-
-            var result = await _usageApi.FetchAsync(CancellationToken.None);
-
-            // The account is resolved before the result is applied, so the very first fetch
-            // already lands in the right account's history and feeds the forecast.
-            if (result.Status == UsageFetchStatus.Ok && _accountId is null)
-                await ResolveAccountAsync();
-
-            if (result is { Status: UsageFetchStatus.Ok, Snapshot: { } snapshot })
-                _history.Append(UsageHistoryRecord.FromSnapshot(snapshot));
-
-            ApplyResult(result);
+            while (generation != _generation);
         }
         finally
         {
@@ -761,23 +1096,70 @@ public sealed class UsageTrayContext : ApplicationContext
         }
     }
 
-    /// <summary>Fetches the signed-in account's label (shown at the top of the menu) and ID
-    /// (keys the usage history). On failure both stay unset and the next successful usage
-    /// fetch tries again; until then, fetches aren't recorded in the history.</summary>
-    private async Task ResolveAccountAsync()
+    private async Task RefreshOnceAsync(int generation)
     {
-        if (await _usageApi.FetchAccountAsync(CancellationToken.None) is not { } account)
-            return;
-
-        if (account.DisplayLabel is { } label)
+        if (_hasUsageSnapshot)
         {
-            _cachedAccountName = label;
-            _userItem.Text = Strings.UserLabel(label);
-            _userItem.Visible = true;
+            _currentIconKind = IconKind.Refreshing;
+            SetIcon(TrayIconFactory.CreateRefreshingIcon(TrayPalette, _lastSessionPercent, _lastWeeklyPercent, _lastCreditPercent, HasUpdate, SessionRingFraction, SessionNotStarted, WeeklyPaceFraction));
+        }
+        UpdateFlyout();
+
+        if (_active is not { } account)
+        {
+            ApplyResult(new UsageFetchResult(UsageFetchStatus.NotLoggedIn, null));
+            return;
         }
 
-        _accountId = account.Id;
-        _history.SetAccount(account.Id);
+        var result = await _usageApi.FetchAsync(account.Key, CancellationToken.None);
+        if (generation != _generation)
+            return;
+
+        // The account is resolved before the result is applied, so the very first fetch
+        // already lands in the right account's history and feeds the forecast.
+        if (result.Status == UsageFetchStatus.Ok)
+        {
+            await ResolveAccountAsync(account, generation);
+            if (generation != _generation)
+                return;
+        }
+
+        if (result is { Status: UsageFetchStatus.Ok, Snapshot: { } snapshot })
+            _history.Append(UsageHistoryRecord.FromSnapshot(snapshot));
+
+        ApplyResult(result);
+    }
+
+    /// <summary>Fetches the account's label (shown in the menu and flyout) and ID (keys the
+    /// usage history) once per run. On failure both stay as they were and the next successful
+    /// usage fetch tries again; without an ID, fetches aren't recorded in the history.</summary>
+    private async Task ResolveAccountAsync(SavedAccount account, int generation)
+    {
+        if (_resolvedAccounts.Contains(account.Key))
+            return;
+        if (await _usageApi.FetchAccountAsync(account.Key, CancellationToken.None) is not { } info)
+            return;
+        if (generation != _generation || !_accounts.Contains(account))
+            return;
+
+        _resolvedAccounts.Add(account.Key);
+        ApplyAccountInfo(account, info);
+        UpdateLoginMenuState();
+    }
+
+    /// <summary>Empties the usage shown in the menu, icon state and forecasts.</summary>
+    private void ClearUsageDisplay()
+    {
+        _hasUsageSnapshot = false;
+        _lastCreditPercent = null;
+        _lastSessionResetsAt = null;
+        _lastWeeklyResetsAt = null;
+        _lastUsageSnapshot = null;
+        _sessionItem.Text = Strings.MenuSessionEmpty;
+        _weeklyItem.Text = Strings.MenuWeeklyEmpty;
+        _creditsItem.Visible = false;
+        ApplyLimitMenuItems([]);
+        ResetForecasts();
     }
 
     private void ApplyResult(UsageFetchResult result)
@@ -785,38 +1167,19 @@ public sealed class UsageTrayContext : ApplicationContext
         switch (result.Status)
         {
             case UsageFetchStatus.NotLoggedIn:
-                _currentIconKind = IconKind.Unavailable;
-                SetIcon(TrayIconFactory.CreateUnavailableIcon(TrayPalette, HasUpdate));
-                SetNotifyIconText(Strings.TooltipNotLoggedIn);
-                ForgetAccount();
-                _hasUsageSnapshot = false;
-                _lastCreditPercent = null;
-                _lastSessionResetsAt = null;
-                _lastWeeklyResetsAt = null;
-                _lastUsageSnapshot = null;
-                _sessionItem.Text = Strings.MenuSessionEmpty;
-                _weeklyItem.Text = Strings.MenuWeeklyEmpty;
-                _creditsItem.Visible = false;
-                ApplyLimitMenuItems([]);
-                _statusItem.Text = Strings.StatusPromptLogin;
-                UpdateLoginMenuState();
-                return;
-
             case UsageFetchStatus.AuthExpired:
-                _oauth.Logout();
+                // No account at all, or the active one has no (valid) token any more: it stays
+                // in the account list as "login required", the other accounts aren't affected.
+                if (result.Status == UsageFetchStatus.AuthExpired && _active is not null)
+                    TokenStore.Clear(_active.Key);
+                var needsLogin = _active is not null;
                 _currentIconKind = IconKind.Unavailable;
                 SetIcon(TrayIconFactory.CreateUnavailableIcon(TrayPalette, HasUpdate));
-                SetNotifyIconText(Strings.TooltipAuthExpired);
-                ForgetAccount();
-                _hasUsageSnapshot = false;
-                _lastCreditPercent = null;
-                _lastSessionResetsAt = null;
-                _lastWeeklyResetsAt = null;
-                _lastUsageSnapshot = null;
-                _creditsItem.Visible = false;
-                ApplyLimitMenuItems([]);
-                _statusItem.Text = Strings.StatusPleaseReauth;
+                SetNotifyIconText(needsLogin ? Strings.TooltipAuthExpired : Strings.TooltipNotLoggedIn);
+                ClearUsageDisplay();
+                _statusItem.Text = needsLogin ? Strings.StatusPleaseReauth : Strings.StatusPromptLogin;
                 UpdateLoginMenuState();
+                UpdateAccountMenu();
                 return;
 
             case UsageFetchStatus.NetworkError:
@@ -827,7 +1190,16 @@ public sealed class UsageTrayContext : ApplicationContext
                 return;
         }
 
-        var snapshot = result.Snapshot!;
+        ApplySnapshot(result.Snapshot!, live: true);
+    }
+
+    /// <summary>Shows a usage snapshot in the icon, tooltip, menu and forecasts. <paramref
+    /// name="live"/>: just fetched (remembered per account, may notify); otherwise the last
+    /// known values shown right after switching accounts.</summary>
+    private void ApplySnapshot(UsageSnapshot snapshot, bool live)
+    {
+        if (live && _active is not null)
+            _lastSnapshots[_active.Key] = snapshot;
         _hasUsageSnapshot = true;
         _lastSessionPercent = snapshot.SessionPercent;
         _lastWeeklyPercent = snapshot.WeeklyPercent;
@@ -865,7 +1237,8 @@ public sealed class UsageTrayContext : ApplicationContext
 
         _statusItem.Text = Strings.StatusUpdated(snapshot.FetchedAt);
 
-        MaybeWarn(snapshot);
+        if (live)
+            MaybeWarn(snapshot);
     }
 
     /// <summary>One disabled menu line per additional limit (e.g. a model's weekly limit):
@@ -946,7 +1319,8 @@ public sealed class UsageTrayContext : ApplicationContext
             snapshot.SessionPercent, snapshot.SessionResetsAt, snapshot.WeeklyPercent, snapshot.WeeklyResetsAt,
             snapshot.FetchedAt, _lastCreditPercent, pacePercent,
             withForecast ? _sessionForecast.LimitIn : null,
-            withForecast ? _weeklyForecast.LimitIn : null);
+            withForecast ? _weeklyForecast.LimitIn : null,
+            MultipleAccounts ? ActiveName : null);
 
         SetNotifyIconText(
             Summary(WeeklyPacePercent, withForecast: true),
@@ -1062,62 +1436,68 @@ public sealed class UsageTrayContext : ApplicationContext
             ? $"{text}\n{Strings.TooltipUpdateAvailable(update.Version)}"
             : text;
 
+    /// <summary>Notifies about the active account's usage; the state of what has been
+    /// notified is kept per account (<see cref="AlertState"/>).</summary>
     private void MaybeWarn(UsageSnapshot snapshot)
     {
-        if (snapshot.SessionPercent >= WarnThresholdPercent && !_sessionWarningShown)
+        var alerts = _alerts;
+        if (snapshot.SessionPercent >= WarnThresholdPercent && !alerts.SessionWarningShown)
         {
             _notifier.ShowUsageAlert(UsageAlert.Session,
-                Strings.NotificationSessionWarning(snapshot.SessionPercent, snapshot.SessionResetsAt), snapshot.SessionResetsAt);
-            _sessionWarningShown = true;
+                AlertText(Strings.NotificationSessionWarning(snapshot.SessionPercent, snapshot.SessionResetsAt)), snapshot.SessionResetsAt);
+            alerts.SessionWarningShown = true;
         }
         else if (snapshot.SessionPercent < WarnThresholdPercent)
         {
-            _sessionWarningShown = false;
+            alerts.SessionWarningShown = false;
         }
 
-        if (snapshot.WeeklyPercent >= WarnThresholdPercent && !_weeklyWarningShown)
+        if (snapshot.WeeklyPercent >= WarnThresholdPercent && !alerts.WeeklyWarningShown)
         {
             _notifier.ShowUsageAlert(UsageAlert.Weekly,
-                Strings.NotificationWeeklyWarning(snapshot.WeeklyPercent, snapshot.WeeklyResetsAt), snapshot.WeeklyResetsAt);
-            _weeklyWarningShown = true;
+                AlertText(Strings.NotificationWeeklyWarning(snapshot.WeeklyPercent, snapshot.WeeklyResetsAt)), snapshot.WeeklyResetsAt);
+            alerts.WeeklyWarningShown = true;
         }
         else if (snapshot.WeeklyPercent < WarnThresholdPercent)
         {
-            _weeklyWarningShown = false;
+            alerts.WeeklyWarningShown = false;
         }
 
         // Additional limits: once per limit, until it drops below the threshold again (or
         // is no longer reported).
         var limits = snapshot.AdditionalLimits ?? [];
-        _limitWarningsShown.IntersectWith(limits.Select(l => l.Key));
+        alerts.LimitWarningsShown.IntersectWith(limits.Select(l => l.Key));
         foreach (var limit in limits)
         {
             if (limit.RoundedPercent >= WarnThresholdPercent)
             {
-                if (_limitWarningsShown.Add(limit.Key))
-                    _notifier.ShowUsageAlert(UsageAlert.AdditionalLimit, Strings.NotificationLimitWarning(limit), limit.ResetsAt, limit.Key);
+                if (alerts.LimitWarningsShown.Add(limit.Key))
+                    _notifier.ShowUsageAlert(UsageAlert.AdditionalLimit, AlertText(Strings.NotificationLimitWarning(limit)), limit.ResetsAt, limit.Key);
             }
             else
             {
-                _limitWarningsShown.Remove(limit.Key);
+                alerts.LimitWarningsShown.Remove(limit.Key);
             }
         }
 
         if (_sessionForecast.LimitIn is { } limitIn && limitIn <= ForecastWarnWithin)
         {
-            if (!_sessionForecastWarningShown)
+            if (!alerts.SessionForecastWarningShown)
             {
                 _notifier.ShowUsageAlert(UsageAlert.SessionForecast,
-                    Strings.NotificationSessionForecast(limitIn), snapshot.SessionResetsAt);
-                _sessionForecastWarningShown = true;
+                    AlertText(Strings.NotificationSessionForecast(limitIn)), snapshot.SessionResetsAt);
+                alerts.SessionForecastWarningShown = true;
             }
         }
         else if (_sessionForecast.LimitIn is not { } later || later > ForecastRearmAbove)
         {
             // No forecast any more (idle, reset first, new session) or comfortably far away.
-            _sessionForecastWarningShown = false;
+            alerts.SessionForecastWarningShown = false;
         }
     }
+
+    /// <summary>With more than one account, a notification names the account it's about.</summary>
+    private string AlertText(string text) => MultipleAccounts ? $"{ActiveName}: {text}" : text;
 
 
     private static string Truncate(string value, int maxLength) =>

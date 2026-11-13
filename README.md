@@ -31,10 +31,11 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 
 ![Tooltip showing session, week, and credits usage](screenshots/claude_usage_tooltip.png)
 
-Right-click for the full menu: signed-in account, exact percentages with reset day/time,
+Right-click for the full menu: signed-in account (with [switching between
+accounts](#multiple-accounts)), exact percentages with reset day/time,
 a burn-rate forecast, [additional limits](#additional-limits) such as a model's weekly
 limit, usage credit balance (used/limit, when available), manual refresh, the
-[mini dashboard](#mini-dashboard), login/logout, the usage history ([yearly heatmap](#yearly-heatmap), export, clear), run-at-startup toggle, a session countdown ring
+[mini dashboard](#mini-dashboard), login, the usage history ([yearly heatmap](#yearly-heatmap), export, clear), run-at-startup toggle, a session countdown ring
 toggle, a weekly pace marker toggle, an accessibility mode toggle, a Stream Dock controller toggle, a
 check-for-new-version toggle, and a language switch (German/English):
 
@@ -46,7 +47,8 @@ Left-click the icon for a flyout next to the taskbar, like the Windows volume an
 flyouts. It shows:
 
 - your account, when the data was last updated, a button that opens the
-  [mini dashboard](#mini-dashboard), and a refresh button
+  [mini dashboard](#mini-dashboard), and a refresh button. With more than one
+  [account](#multiple-accounts), a **▾** next to the account's name switches between them
 - the session, week and (when your plan has them) credit usage as large bars, and the
   reset time as both clock time and countdown (`Resets 14:30 · in 1.6h`). Scale ticks
   divide the session bar into its 5 hours and the week bar into its 7 days (so 20% and
@@ -112,7 +114,11 @@ anywhere, e.g. next to your editor or on a second monitor, showing the bars you 
   - **Layout**: compact or expanded.
   - **Always on top** (on by default), **Opacity** (100% down to 30%) and **Lock
     position**, which stops it from being moved or resized by accident.
+  - **Account** (with more than one [account](#multiple-accounts)): switch accounts.
   - **Refresh now**, **Open flyout** and **Close**.
+
+It always shows the active account; with more than one account, the expanded layout's header
+names it, and each account keeps its own bar selection.
 
 It doesn't appear in the taskbar or in Alt+Tab, doesn't take the focus when it opens, and
 follows the light/dark theme, the [accessibility mode](#accessibility) and the display
@@ -121,6 +127,34 @@ settings – is remembered (in `HKCU\Software\AIQuota\MiniDashboard`), so it com
 restart. If its saved position isn't on any screen any more (e.g. a monitor was unplugged),
 it's moved back onto the nearest one. It uses the same data as the flyout and never fetches
 on its own.
+
+### Multiple accounts
+
+If you have more than one Claude account – e.g. a private one and one at work – you can add
+them all and switch between them in two clicks, without logging out and in again.
+
+- **Adding**: right-click → **Logged in as …** → **Add account…**. The sign-in uses the
+  account you're signed in with on claude.ai in your browser, so the app asks how to open it:
+  **Open in browser** (switch accounts on claude.ai first), or **Copy link** to open it in a
+  private browser window and sign in with the other account there. If you sign in with an
+  account that's already in the list, its sign-in is just renewed.
+- **Switching**: pick the account in the **Logged in as …** submenu, or – with more than one
+  account – with the **▾** next to the account's name in the flyout, or under **Account** in
+  the mini dashboard's menu. The new account's last known values show at once and are
+  refreshed right away.
+- **Rename…** gives the active account a short name, e.g. "Work". With more than one account,
+  it's shown in the tooltip, the flyout, the mini dashboard and in notifications, so you always
+  know which account you're looking at.
+- **Remove active account…** deletes that account's sign-in from this PC and switches to the
+  next one. Its usage history is kept (**Usage history → Clear history…** deletes it).
+- If an account's sign-in expires, it stays in the list marked **login required**; selecting
+  it (or **Log in again as …**) signs it in again. The other accounts aren't affected.
+
+Only the active account is polled, so the app makes no more requests than with one account.
+Usage history, heatmap, CSV export, forecasts, notifications and the Stream Dock keys always
+belong to the active account. The accounts are listed in `HKCU\Software\AIQuota\Accounts`; their tokens are
+encrypted per account in `%APPDATA%\AIQuota\accounts\`. An existing sign-in from before is
+taken over as the first account.
 
 The app gets this data the same way the official `claude` CLI does: by signing you in
 with the same public OAuth client Claude Code uses, then calling the same
@@ -409,7 +443,8 @@ click the "show hidden icons" `^` arrow the first time).
 2. Right-click the icon → **Log in with claude.ai…**. Your browser opens; approve the
    sign-in there.
 3. The icon updates with your live usage bars. Right-click any time for exact numbers,
-   or hover for a quick summary.
+   or hover for a quick summary. To add a further Claude account, see
+   [Multiple accounts](#multiple-accounts).
 4. Optionally check **Run at Windows startup** so it's always there after a reboot.
 5. The session countdown ring (**Show session countdown ring**) is on by default;
    uncheck it if you'd rather see just the plain usage bars.

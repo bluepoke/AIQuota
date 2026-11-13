@@ -30,8 +30,40 @@ internal sealed class MiniDashboardSettings
 
     /// <summary>Keys of the bars to show (see <see cref="UsageSection.Key"/>), e.g. "session",
     /// "week", "credits" or "limit:weekly_scoped:opus". Keys of bars that aren't currently
-    /// reported stay selected, so they come back when the bar does.</summary>
+    /// reported stay selected, so they come back when the bar does. This is the default for
+    /// an account without its own selection (see <see cref="BarsFor"/>) - the selection from
+    /// before multiple accounts.</summary>
     public List<string> Bars { get; set; } = [UsageSections.SessionKey, UsageSections.WeekKey];
+
+    /// <summary>Bar selection per saved account (by <see cref="Auth.SavedAccount.Key"/>), since
+    /// accounts on different plans report different additional limits (#13). Saved under
+    /// <c>MiniDashboard\Bars</c>, one value per account.</summary>
+    private readonly Dictionary<string, List<string>> _accountBars = [];
+
+    /// <summary>The bar selection of the account - <see cref="Bars"/> until it was changed for
+    /// that account.</summary>
+    public IReadOnlyList<string> BarsFor(string? accountKey) =>
+        accountKey is not null && _accountBars.TryGetValue(accountKey, out var bars) ? bars : Bars;
+
+    /// <summary>Sets the account's bar selection (without an account: the default). Call
+    /// <see cref="Save"/> after.</summary>
+    public void SetBars(string? accountKey, IEnumerable<string> bars)
+    {
+        if (accountKey is null)
+            Bars = [.. bars];
+        else
+            _accountBars[accountKey] = [.. bars];
+    }
+
+    /// <summary>Forgets a removed account's bar selection.</summary>
+    public void RemoveAccount(string accountKey)
+    {
+        _accountBars.Remove(accountKey);
+        using var key = Registry.CurrentUser.OpenSubKey(BarsKeyPath, writable: true);
+        key?.DeleteValue(accountKey, throwOnMissingValue: false);
+    }
+
+    private const string BarsKeyPath = KeyPath + @"\Bars";
 
     public int OpacityPercent { get; set; } = 100;
 
@@ -59,6 +91,13 @@ internal sealed class MiniDashboardSettings
             settings.OpacityPercent = opacity;
         settings.TopMost = key.GetValue("TopMost") is not int topMost || topMost != 0;
         settings.Locked = key.GetValue("Locked") is int locked && locked != 0;
+
+        using var barsKey = Registry.CurrentUser.OpenSubKey(BarsKeyPath, writable: false);
+        foreach (var account in barsKey?.GetValueNames() ?? [])
+        {
+            if (barsKey!.GetValue(account) is string[] accountBars && accountBars.Length > 0)
+                settings._accountBars[account] = [.. accountBars.Where(b => !string.IsNullOrWhiteSpace(b)).Distinct()];
+        }
         return settings;
     }
 
@@ -77,5 +116,9 @@ internal sealed class MiniDashboardSettings
         key.SetValue("Opacity", OpacityPercent, RegistryValueKind.DWord);
         key.SetValue("TopMost", TopMost ? 1 : 0, RegistryValueKind.DWord);
         key.SetValue("Locked", Locked ? 1 : 0, RegistryValueKind.DWord);
+
+        using var barsKey = Registry.CurrentUser.CreateSubKey(BarsKeyPath, writable: true);
+        foreach (var (account, bars) in _accountBars)
+            barsKey.SetValue(account, bars.ToArray(), RegistryValueKind.MultiString);
     }
 }

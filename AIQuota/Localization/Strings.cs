@@ -33,11 +33,51 @@ public static class Strings
 
     public static string UserLabel(string email) => T($"Angemeldet als {email}", $"Logged in as {email}");
 
+    // Multiple accounts (#13)
+    /// <summary>For an account whose profile couldn't be fetched yet (e.g. right after the
+    /// update, before the first successful refresh).</summary>
+    public static string AccountUnnamed => T("Konto (Name noch unbekannt)", "Account (name not known yet)");
+    public static string AccountLoginRequiredSuffix => T(" – Anmeldung erforderlich", " – login required");
+    public static string MenuAddAccount => T("Konto hinzufügen…", "Add account…");
+    public static string MenuRenameAccount => T("Umbenennen…", "Rename…");
+    public static string MenuRemoveAccount => T("Aktives Konto entfernen…", "Remove active account…");
+    public static string MenuLoginAgain(string name) => T($"Erneut anmelden als {name}…", $"Log in again as {name}…");
+    public static string ConfirmRemoveAccount(string name) => T(
+        $"Das Konto \"{name}\" aus AI Quota entfernen?\n\nSeine Anmeldung wird von diesem PC gelöscht. Sein Nutzungsverlauf bleibt erhalten (löschen mit Nutzungsverlauf > Verlauf löschen…).",
+        $"Remove the account \"{name}\" from AI Quota?\n\nIts sign-in is deleted from this PC. Its usage history is kept (delete it with Usage history > Clear history…).");
+    public static string AddAccountHeading => T("Weiteres Claude-Konto hinzufügen", "Add another Claude account");
+    public static string LoginAgainHeading(string name) => T($"Erneut anmelden als {name}", $"Log in again as {name}");
+    public static string AddAccountText => T(
+        "Die Anmeldung verwendet das Konto, mit dem du gerade im Browser bei claude.ai angemeldet bist.\n\nUm ein anderes Konto anzumelden, wechsle vorher auf claude.ai das Konto - oder kopiere den Anmeldelink und öffne ihn in einem privaten Browserfenster.",
+        "The sign-in uses the account you're currently signed in with on claude.ai in your browser.\n\nTo sign in with a different account, switch accounts on claude.ai first - or copy the sign-in link and open it in a private browser window.");
+    public static string AddAccountOpenBrowser => T("Im Browser öffnen", "Open in browser");
+    public static string AddAccountCopyLink => T("Link kopieren (für ein privates Fenster)", "Copy link (for a private window)");
+    public static string TooltipWaitingForLoginLink => T(
+        "Claude Nutzung – Anmeldelink kopiert, warte auf Anmeldung…",
+        "Claude Usage – sign-in link copied, waiting for login…");
+    public static string TooltipLoadingAccount(string name) => T($"Claude Nutzung – {name} wird geladen…", $"Claude Usage – loading {name}…");
+    public static string LoginAccountAlreadyAdded(string name) => T(
+        $"\"{name}\" ist bereits in der Kontoliste. Seine Anmeldung wurde erneuert.",
+        $"\"{name}\" is already in the account list. Its sign-in has been renewed.");
+    public static string LoginDifferentAccount(string signedIn, string expected) => T(
+        $"Du hast dich als \"{signedIn}\" angemeldet, nicht als \"{expected}\". \"{signedIn}\" wurde als eigenes Konto hinzugefügt.",
+        $"You signed in as \"{signedIn}\", not as \"{expected}\". \"{signedIn}\" has been added as a separate account.");
+    public static string LoginDifferentExistingAccount(string signedIn, string expected) => T(
+        $"Du hast dich als \"{signedIn}\" angemeldet, nicht als \"{expected}\". Es wurde zu \"{signedIn}\" gewechselt; \"{expected}\" braucht weiterhin eine neue Anmeldung.",
+        $"You signed in as \"{signedIn}\", not as \"{expected}\". Switched to \"{signedIn}\"; \"{expected}\" still needs a new login.");
+    public static string RenameAccountTitle => T("Konto umbenennen", "Rename account");
+    public static string RenameAccountPrompt(string label) => T(
+        $"Kurzname für {label} (z. B. \"Privat\" oder \"Arbeit\"). Leer lassen, um den Namen aus dem Konto zu verwenden.",
+        $"Short name for {label} (e.g. \"Private\" or \"Work\"). Leave empty to use the account's own name.");
+    public static string DialogOk => "OK";
+    public static string DialogCancel => T("Abbrechen", "Cancel");
+    public static string FlyoutSwitchAccount => T("Konto wechseln", "Switch account");
+    public static string MiniDashboardAccount => T("Konto", "Account");
+
     public static string MenuSessionEmpty => T("Sitzung (5h): –", "Session (5h): –");
     public static string MenuWeeklyEmpty => T("Woche: –", "Week: –");
     public static string MenuNotLoggedIn => T("Nicht angemeldet", "Not logged in");
     public static string MenuLogin => T("Bei claude.ai anmelden…", "Log in with claude.ai…");
-    public static string MenuLogout => T("Abmelden", "Log out");
     public static string MenuStartup => T("Bei Windows-Start ausführen", "Run at Windows startup");
     public static string MenuCheckForNewVersion => T("Automatisch nach neuer Version suchen", "Automatically check for new version");
     public static string MenuShowSessionRing => T("Sitzungs-Countdown-Ring anzeigen", "Show session countdown ring");
@@ -281,7 +321,9 @@ public static class Strings
     /// <param name="sessionLimitIn">Forecast time until the session limit - appended to the
     /// session line as <see cref="ForecastTooltipSuffix"/> when set.</param>
     /// <param name="weeklyLimitIn">Same for the week line.</param>
-    public static string TooltipSummary(int sessionPercent, DateTimeOffset? sessionResetsAt, int weeklyPercent, DateTimeOffset? weeklyResetsAt, DateTimeOffset fetchedAt, int? creditPercent = null, int? weeklyPacePercent = null, TimeSpan? sessionLimitIn = null, TimeSpan? weeklyLimitIn = null)
+    /// <param name="title">Replaces "Claude Usage" in the first line - the account's name
+    /// when there's more than one account.</param>
+    public static string TooltipSummary(int sessionPercent, DateTimeOffset? sessionResetsAt, int weeklyPercent, DateTimeOffset? weeklyResetsAt, DateTimeOffset fetchedAt, int? creditPercent = null, int? weeklyPacePercent = null, TimeSpan? sessionLimitIn = null, TimeSpan? weeklyLimitIn = null, string? title = null)
     {
         var sessionRemaining = (sessionResetsAt is null ? SessionNotStartedSuffix : FormatCompactRemaining(sessionResetsAt))
             + ForecastTooltipSuffix(sessionLimitIn);
@@ -289,9 +331,10 @@ public static class Strings
             + ForecastTooltipSuffix(weeklyLimitIn);
         var time = fetchedAt.ToLocalTime().ToString("HH:mm");
         var creditsLine = creditPercent is { } cp ? T($"\nGuthaben: {cp}%", $"\nCredits: {cp}%") : "";
+        var heading = title ?? AppTitle;
         return T(
-            $"Claude Nutzung ({time})\nSitzung (5h): {sessionPercent}%{sessionRemaining}\nWoche: {weeklyPercent}%{weeklyRemaining}{creditsLine}",
-            $"Claude Usage ({time})\nSession (5h): {sessionPercent}%{sessionRemaining}\nWeek: {weeklyPercent}%{weeklyRemaining}{creditsLine}");
+            $"{heading} ({time})\nSitzung (5h): {sessionPercent}%{sessionRemaining}\nWoche: {weeklyPercent}%{weeklyRemaining}{creditsLine}",
+            $"{heading} ({time})\nSession (5h): {sessionPercent}%{sessionRemaining}\nWeek: {weeklyPercent}%{weeklyRemaining}{creditsLine}");
     }
 
     public static string TooltipUpdateAvailable(string version) => T($"Update verfügbar: Version {version}", $"Update available: Version {version}");

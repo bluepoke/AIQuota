@@ -21,7 +21,13 @@ internal sealed record FlyoutState(
     UsageForecast WeeklyForecast,
     IReadOnlyList<UsageHistoryRecord> History,
     bool Greyscale = false,
-    bool HasError = false);
+    bool HasError = false,
+    // The active account (SavedAccount.Key), e.g. for the mini dashboard's bar selection per
+    // account; null without one.
+    string? AccountKey = null,
+    // More than one account is saved: the flyout and mini dashboard offer switching, and the
+    // mini dashboard names the account.
+    bool CanSwitchAccount = false);
 
 /// <summary>
 /// Small borderless panel shown next to the tray icon on left-click, like the Windows volume
@@ -60,6 +66,7 @@ internal sealed class UsageFlyout : Form
     private readonly Button _refreshButton;
     private readonly Button _miniDashboardButton;
     private readonly Button _heatmapButton;
+    private readonly Button _accountButton;
     private readonly ToolTip _toolTip = new();
     private readonly System.Windows.Forms.Timer _clockTimer = new() { Interval = 30_000 };
     private readonly System.Windows.Forms.Timer _reactivateCheck = new() { Interval = 150 };
@@ -83,8 +90,19 @@ internal sealed class UsageFlyout : Form
     /// <summary>The 7-day chart's title from the last layout, where the heatmap button goes
     /// next to; empty while there's no chart (logged out, nothing fetched yet).</summary>
     private RectangleF _historyTitle;
+    /// <summary>The header's account name from the last layout, where the account button
+    /// goes next to; empty while switching isn't offered.</summary>
+    private RectangleF _accountTitle;
     private List<(PointF Point, UsageHistoryRecord Record)> _chartPoints = [];
     private int? _hoverIndex;
+
+    /// <summary>Creates the menu items for switching accounts (#13), opened by the ▾ button
+    /// next to the account name while more than one account is saved.</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public Func<IReadOnlyList<ToolStripItem>>? CreateAccountItems { get; init; }
+
+    /// <summary>Also while the active account needs a new login, so another one can be picked.</summary>
+    private bool ShowAccountButton => _state.CanSwitchAccount && CreateAccountItems is not null;
 
     /// <param name="openMiniDashboard">Opens the mini dashboard (header button next to refresh).</param>
     /// <param name="openHeatmap">Opens the yearly heatmap (button next to the chart's title).</param>
@@ -147,6 +165,18 @@ internal sealed class UsageFlyout : Form
         };
         Controls.Add(_heatmapButton);
 
+        _accountButton = new Button
+        {
+            Text = "", // Segoe MDL2 Assets "ChevronDown"
+            FlatStyle = FlatStyle.Flat,
+            TabStop = true,
+            UseVisualStyleBackColor = false,
+            Visible = false,
+        };
+        _accountButton.FlatAppearance.BorderSize = 0;
+        _accountButton.Click += (_, _) => ShowAccountMenu();
+        Controls.Add(_accountButton);
+
         _clockTimer.Tick += (_, _) => Invalidate();
         _reactivateCheck.Tick += (_, _) =>
         {
@@ -156,6 +186,19 @@ internal sealed class UsageFlyout : Form
         };
 
         ApplyLayout();
+    }
+
+    /// <summary>Opens the account list under the ▾ button. The menu doesn't take the
+    /// activation, so the flyout stays open and shows the new account after a switch.</summary>
+    private void ShowAccountMenu()
+    {
+        if (CreateAccountItems is not { } createItems)
+            return;
+        var menu = new ContextMenuStrip();
+        menu.Items.AddRange([.. createItems()]);
+        // Disposed only after an item's Click has run, which comes after Closed.
+        menu.Closed += (_, _) => BeginInvoke(menu.Dispose);
+        menu.Show(_accountButton, new Point(0, _accountButton.Height));
     }
 
     /// <summary>Click on a usage notification: opens the flyout at <paramref name="cursor"/>,
@@ -368,6 +411,18 @@ internal sealed class UsageFlyout : Form
         _heatmapButton.FlatAppearance.MouseDownBackColor = _palette.Track;
         _heatmapButton.AccessibleName = Strings.FlyoutOpenHeatmap;
         _toolTip.SetToolTip(_heatmapButton, Strings.FlyoutOpenHeatmap);
+
+        // Right after the account name, centred on its line.
+        _accountButton.Visible = !_accountTitle.IsEmpty;
+        _accountButton.Size = new Size(smallButton, smallButton);
+        _accountButton.Location = new Point((int)Math.Round(_accountTitle.Right + S(2f)),
+            (int)Math.Round(_accountTitle.Y + (_accountTitle.Height - smallButton) / 2f));
+        _accountButton.BackColor = _palette.Background;
+        _accountButton.ForeColor = _palette.Text;
+        _accountButton.FlatAppearance.MouseOverBackColor = _palette.Hover;
+        _accountButton.FlatAppearance.MouseDownBackColor = _palette.Track;
+        _accountButton.AccessibleName = Strings.FlyoutSwitchAccount;
+        _toolTip.SetToolTip(_accountButton, Strings.FlyoutSwitchAccount);
         BackColor = _palette.Background;
     }
 
@@ -388,6 +443,7 @@ internal sealed class UsageFlyout : Form
         _refreshButton.Font = _iconFont;
         _miniDashboardButton.Font = _iconFont;
         _heatmapButton.Font = _iconFont;
+        _accountButton.Font = _iconFont;
         _fontScale = _scale;
 
         oldTitle?.Dispose();
@@ -489,8 +545,20 @@ internal sealed class UsageFlyout : Form
         var headerTextWidth = width - S(68f);
 
         // Header: account and last update / status, refresh button on the right.
-        var title = _state.LoggedIn ? _state.AccountLabel ?? Strings.AppTitle : Strings.AppTitle;
-        DrawText(g, title, _titleFont, _palette.Text, new RectangleF(left, y, headerTextWidth, S(20f)));
+        // The account's name - also while it needs a new login (the body says "Not logged in").
+        var title = _state.AccountLabel ?? Strings.AppTitle;
+        _accountTitle = RectangleF.Empty;
+        if (ShowAccountButton)
+        {
+            // Leave room for the ▾ button right after the name (see ApplyLayout).
+            var titleWidth = Math.Min(TextRenderer.MeasureText(title, _titleFont).Width + S(2f), headerTextWidth - S(26f));
+            _accountTitle = new RectangleF(left, y, titleWidth, S(20f));
+            DrawText(g, title, _titleFont, _palette.Text, _accountTitle);
+        }
+        else
+        {
+            DrawText(g, title, _titleFont, _palette.Text, new RectangleF(left, y, headerTextWidth, S(20f)));
+        }
         y += S(20f);
         var status = _state.IsRefreshing ? Strings.FlyoutRefreshing : _state.StatusText;
         DrawText(g, status, _smallFont, _palette.Secondary, new RectangleF(left, y, headerTextWidth, S(18f)));

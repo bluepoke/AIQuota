@@ -74,11 +74,12 @@ public sealed class UsageApiClient(OAuthClient oauth)
 {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
 
-    public async Task<UsageFetchResult> FetchAsync(CancellationToken cancellationToken)
+    /// <param name="accountKey">The saved account to fetch for (<see cref="SavedAccount.Key"/>).</param>
+    public async Task<UsageFetchResult> FetchAsync(string accountKey, CancellationToken cancellationToken)
     {
         try
         {
-            var accessToken = await oauth.GetValidAccessTokenAsync(cancellationToken);
+            var accessToken = await oauth.GetValidAccessTokenAsync(accountKey, cancellationToken);
             if (accessToken is null)
                 return new UsageFetchResult(UsageFetchStatus.NotLoggedIn, null);
 
@@ -142,14 +143,29 @@ public sealed class UsageApiClient(OAuthClient oauth)
     /// "nice to have", and without an ID the usage history just isn't recorded until the
     /// next successful attempt.
     /// </summary>
-    public async Task<AccountInfo?> FetchAccountAsync(CancellationToken cancellationToken)
+    public async Task<AccountInfo?> FetchAccountAsync(string accountKey, CancellationToken cancellationToken)
     {
         try
         {
-            var accessToken = await oauth.GetValidAccessTokenAsync(cancellationToken);
-            if (accessToken is null)
-                return null;
+            var accessToken = await oauth.GetValidAccessTokenAsync(accountKey, cancellationToken);
+            return accessToken is null ? null : await FetchAccountWithTokenAsync(accessToken, cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+        catch (TaskCanceledException)
+        {
+            return null;
+        }
+    }
 
+    /// <summary><see cref="FetchAccountAsync"/> for a token that isn't stored yet - right
+    /// after a login, to find out which account it belongs to.</summary>
+    public async Task<AccountInfo?> FetchAccountWithTokenAsync(string accessToken, CancellationToken cancellationToken)
+    {
+        try
+        {
             using var request = new HttpRequestMessage(HttpMethod.Get, OAuthConfig.ProfileUrl);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 

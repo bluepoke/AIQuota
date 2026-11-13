@@ -16,7 +16,8 @@ namespace AIQuota;
 /// percentage). <b>Expanded</b>: each bar as in the flyout, with reset time, pace marker,
 /// projection and forecast, under a header with the "updated" time and a refresh button.</item>
 /// <item>A small close button in the top-right corner (in the compact layout next to the first
-/// row's percentage), besides "Close" in the right-click menu.</item>
+/// row's percentage), shown only while the cursor is over the window, besides "Close" in the
+/// right-click menu.</item>
 /// <item>Drag anywhere to move it (unless locked); it snaps to the edges of every monitor's
 /// working area within <see cref="SnapDistance"/>, except while Shift is held. Its width can
 /// be changed from the left and right edges; the height always follows the content.</item>
@@ -50,6 +51,10 @@ internal sealed class MiniDashboard : Form
     private readonly ToolTip _toolTip = new();
     private readonly ContextMenuStrip _menu = new();
     private readonly System.Windows.Forms.Timer _clockTimer = new() { Interval = 30_000 };
+    /// <summary>Runs while the close button is shown, to hide it once the cursor has left the
+    /// window. MouseLeave alone isn't enough: the form also gets it when the cursor moves onto
+    /// the buttons or the resize edges (non-client), and not at all while it's being moved.</summary>
+    private readonly System.Windows.Forms.Timer _hoverTimer = new() { Interval = 150 };
 
     private FlyoutState _state;
     private FlyoutPalette _palette = FlyoutPalette.For(SystemTheme.IsLightTaskbar());
@@ -70,6 +75,11 @@ internal sealed class MiniDashboard : Form
     private Font _smallFont = null!;
     private Font _iconFont = null!;
     private Font _closeFont = null!;
+
+    /// <summary>Creates the menu items for switching accounts (#13), shown as an "Account"
+    /// submenu in the right-click menu while more than one account is saved.</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public Func<IReadOnlyList<ToolStripItem>>? CreateAccountItems { get; init; }
 
     /// <param name="close">Called for the close button and "Close" in the window's menu; the
     /// owner hides the window and remembers that it's closed.</param>
@@ -120,6 +130,7 @@ internal sealed class MiniDashboard : Form
             FlatStyle = FlatStyle.Flat,
             TabStop = true,
             UseVisualStyleBackColor = false,
+            Visible = false, // only while the cursor is over the window (UpdateCloseButton)
         };
         _closeButton.FlatAppearance.BorderSize = 0;
         _closeButton.Click += (_, _) => _close();
@@ -128,6 +139,7 @@ internal sealed class MiniDashboard : Form
         ContextMenuStrip = _menu;
         _menu.Opening += (_, _) => BuildMenu();
         _clockTimer.Tick += (_, _) => UpdateState();
+        _hoverTimer.Tick += (_, _) => UpdateCloseButton();
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -177,12 +189,28 @@ internal sealed class MiniDashboard : Form
 
         Show();
         _clockTimer.Start();
+        UpdateCloseButton();
     }
 
     public void HideDashboard()
     {
         _clockTimer.Stop();
+        _hoverTimer.Stop();
+        _closeButton.Visible = false;
         Hide();
+    }
+
+    /// <summary>Shows the close button while the cursor is over the window (including its
+    /// resize edges and buttons) and hides it otherwise.</summary>
+    private void UpdateCloseButton()
+    {
+        var hovered = Visible && Bounds.Contains(Cursor.Position);
+        if (_closeButton.Visible != hovered)
+            _closeButton.Visible = hovered;
+        if (hovered)
+            _hoverTimer.Start();
+        else
+            _hoverTimer.Stop();
     }
 
     /// <summary>Re-reads the state - after a refresh, a setting or theme change, and every 30
@@ -316,13 +344,22 @@ internal sealed class MiniDashboard : Form
     private List<UsageSection> SelectedSections(DateTimeOffset now)
     {
         var all = UsageSections.Build(_state, now);
-        var selected = all.Where(s => _settings.Bars.Contains(s.Key)).ToList();
+        var selected = all.Where(s => SelectedBars.Contains(s.Key)).ToList();
         return selected.Count > 0
             ? selected
             : all.Where(s => s.Key is UsageSections.SessionKey or UsageSections.WeekKey).ToList();
     }
 
     private string StatusText => _state.IsRefreshing ? Strings.FlyoutRefreshing : _state.StatusText;
+
+    /// <summary>The bar selection of the account shown (each account has its own, #13).</summary>
+    private IReadOnlyList<string> SelectedBars => _settings.BarsFor(_state.AccountKey);
+
+    /// <summary>The expanded header: the status, preceded by the account's name while more
+    /// than one account is saved.</summary>
+    private string HeaderText => _state is { CanSwitchAccount: true, AccountLabel: { } account }
+        ? $"{account} · {StatusText}"
+        : StatusText;
 
     // ---------------------------------------------------------------- painting
 
@@ -355,7 +392,7 @@ internal sealed class MiniDashboard : Form
         if (_settings.Expanded)
         {
             // Left of the refresh and close buttons.
-            UsageBarRenderer.DrawText(g, StatusText, _smallFont, _palette.Secondary,
+            UsageBarRenderer.DrawText(g, HeaderText, _smallFont, _palette.Secondary,
                 new RectangleF(left, y, width - S(2 * HeaderHeight), S(HeaderHeight)));
             y += S(HeaderHeight) + S(6f);
         }
@@ -434,7 +471,7 @@ internal sealed class MiniDashboard : Form
         foreach (var section in available)
         {
             var key = section.Key;
-            var item = new ToolStripMenuItem(section.Label) { Checked = _settings.Bars.Contains(key) };
+            var item = new ToolStripMenuItem(section.Label) { Checked = SelectedBars.Contains(key) };
             item.Click += (_, _) => ToggleBar(key, available);
             bars.DropDownItems.Add(item);
         }
@@ -458,6 +495,12 @@ internal sealed class MiniDashboard : Form
         _menu.Items.Add(new ToolStripMenuItem(Strings.MiniDashboardLock, null, (_, _) => SetLocked(!_settings.Locked)) { Checked = _settings.Locked });
         _menu.Items.Add(new ToolStripSeparator());
 
+        if (_state.CanSwitchAccount && CreateAccountItems is { } createAccountItems)
+        {
+            var account = new ToolStripMenuItem(Strings.MiniDashboardAccount);
+            account.DropDownItems.AddRange([.. createAccountItems()]);
+            _menu.Items.Add(account);
+        }
         _menu.Items.Add(new ToolStripMenuItem(Strings.MenuRefresh, null, async (_, _) => await _refresh()) { Enabled = _state is { LoggedIn: true, IsRefreshing: false } });
         _menu.Items.Add(new ToolStripMenuItem(Strings.MiniDashboardOpenFlyout, null, (_, _) => _openFlyout()));
         _menu.Items.Add(new ToolStripMenuItem(Strings.MiniDashboardClose, null, (_, _) => _close()));
@@ -466,17 +509,19 @@ internal sealed class MiniDashboard : Form
     /// <summary>Turns a bar on or off - but never the last one that's currently shown.</summary>
     private void ToggleBar(string key, IReadOnlyList<UsageSection> available)
     {
-        if (_settings.Bars.Contains(key))
+        var bars = SelectedBars.ToList();
+        if (bars.Contains(key))
         {
-            var shownAfter = available.Count(s => s.Key != key && _settings.Bars.Contains(s.Key));
+            var shownAfter = available.Count(s => s.Key != key && bars.Contains(s.Key));
             if (shownAfter == 0)
                 return;
-            _settings.Bars.Remove(key);
+            bars.Remove(key);
         }
         else
         {
-            _settings.Bars.Add(key);
+            bars.Add(key);
         }
+        _settings.SetBars(_state.AccountKey, bars);
         ApplySettingChange();
     }
 
@@ -537,6 +582,13 @@ internal sealed class MiniDashboard : Form
         NativeMethods.SendMessage(Handle, NativeMethods.WM_NCLBUTTONDOWN, NativeMethods.HTCAPTION, IntPtr.Zero);
     }
 
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!_closeButton.Visible)
+            UpdateCloseButton();
+    }
+
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
@@ -574,6 +626,12 @@ internal sealed class MiniDashboard : Form
                         m.Result = NativeMethods.HTRIGHT;
                 }
                 return;
+
+            case NativeMethods.WM_NCMOUSEMOVE:
+                // The cursor came in over a resize edge, which sends no OnMouseMove.
+                if (!_closeButton.Visible)
+                    UpdateCloseButton();
+                break;
 
             case NativeMethods.WM_SIZING:
                 ConstrainSizing(m.WParam.ToInt32(), m.LParam);
@@ -678,6 +736,7 @@ internal sealed class MiniDashboard : Form
         if (disposing)
         {
             _clockTimer.Dispose();
+            _hoverTimer.Dispose();
             _toolTip.Dispose();
             _menu.Dispose();
             _labelFont?.Dispose();
@@ -701,6 +760,7 @@ internal sealed class MiniDashboard : Form
     private static class NativeMethods
     {
         public const int WM_NCHITTEST = 0x0084;
+        public const int WM_NCMOUSEMOVE = 0x00A0;
         public const int WM_NCLBUTTONDOWN = 0x00A1;
         public const int WM_SIZING = 0x0214;
         public const int WM_MOVING = 0x0216;

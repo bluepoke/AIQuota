@@ -215,7 +215,9 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
     var about = Item(Strings.MenuAbout);
     about.DropDownItems.Add(Strings.MenuGitHub);
 
-    menu.Items.Add(Item(Strings.UserLabel(Account), false));
+    var account = Item(Strings.UserLabel(Account));
+    account.DropDownItems.Add(Strings.MenuAddAccount);
+    menu.Items.Add(account);
     menu.Items.Add(Item(Strings.SessionLabel(72, Strings.FormatReset(sessionReset)), false));
     menu.Items.Add(Item(Strings.ForecastLimitIn(TimeSpan.FromMinutes(38)), false));
     menu.Items.Add(Item(Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(weeklyReset)) + Strings.PaceSuffix((int)Math.Round(WeeklyPacePercent())), false));
@@ -227,7 +229,6 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
     menu.Items.Add(new ToolStripSeparator());
     menu.Items.Add(Item(Strings.MenuRefresh));
     menu.Items.Add(Item(Strings.MenuMiniDashboard));
-    menu.Items.Add(Item(Strings.MenuLogout));
     menu.Items.Add(history_);
     menu.Items.Add(settings);
     menu.Items.Add(about);
@@ -256,7 +257,7 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
     object State(bool greyscale) => Activator.CreateInstance(stateType,
         true, Account, Strings.StatusUpdated(snapshot.FetchedAt), false, snapshot, 25, false, true,
         new UsageForecast(ForecastKind.Limit, TimeSpan.FromMinutes(38), 100), new UsageForecast(ForecastKind.ResetFirst, ProjectedPercent: 78),
-        (IReadOnlyList<UsageHistoryRecord>)history, greyscale, false)!;
+        (IReadOnlyList<UsageHistoryRecord>)history, greyscale, false, null, false)!;
     Delegate Getter(object state) => Delegate.CreateDelegate(typeof(Func<>).MakeGenericType(stateType), new Holder(state),
         typeof(Holder).GetMethod(nameof(Holder.Get))!.MakeGenericMethod(stateType));
 
