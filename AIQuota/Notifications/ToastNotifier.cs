@@ -33,14 +33,15 @@ internal sealed class ToastNotifier : INotifier
 
     private const string Group = "aiquota";
     private const string ActionKey = "action";
+    private const string AccountKey = "account";
     private const string OpenUsagePageAction = "openUsagePage";
     private const string InstallAction = "install";
 
     private readonly INotifier _fallback;
-    private readonly Action<NotificationAction> _onAction;
+    private readonly Action<NotificationAction, string?> _onAction;
     private readonly SynchronizationContext _uiContext;
 
-    private ToastNotifier(INotifier fallback, Action<NotificationAction> onAction, SynchronizationContext uiContext)
+    private ToastNotifier(INotifier fallback, Action<NotificationAction, string?> onAction, SynchronizationContext uiContext)
     {
         _fallback = fallback;
         _onAction = onAction;
@@ -54,7 +55,7 @@ internal sealed class ToastNotifier : INotifier
     /// <summary>Toasts, or - if the toolkit can't register them - balloon tips on
     /// <paramref name="notifyIcon"/>. <paramref name="onAction"/> is called on
     /// <paramref name="uiContext"/>.</summary>
-    public static INotifier Create(NotifyIcon notifyIcon, Action<NotificationAction> onAction, SynchronizationContext uiContext)
+    public static INotifier Create(NotifyIcon notifyIcon, Action<NotificationAction, string?> onAction, SynchronizationContext uiContext)
     {
         var balloons = new BalloonNotifier(notifyIcon, onAction);
         try
@@ -67,33 +68,41 @@ internal sealed class ToastNotifier : INotifier
         }
     }
 
-    public void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt, string? limitKey = null)
+    public void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt, string? limitKey = null, string? accountKey = null)
     {
         var tag = alert switch
         {
             UsageAlert.Session => "session",
             UsageAlert.Weekly => "weekly",
-            UsageAlert.AdditionalLimit => LimitTag(limitKey),
+            UsageAlert.AdditionalLimit => "limit-" + limitKey,
             _ => "forecast",
         };
+        // Each account has its own notification per kind (#18).
+        if (accountKey is not null)
+            tag += "-" + accountKey[..Math.Min(8, accountKey.Length)];
 
-        Show(tag, expiresAt,
-            builder => builder
-                .AddText(Strings.AppTitle)
-                .AddText(text)
-                .AddButton(new ToastButton().SetContent(Strings.ToastOpenUsagePage).AddArgument(ActionKey, OpenUsagePageAction))
-                .AddButton(new ToastButtonDismiss(Strings.ToastDismiss)),
-            () => _fallback.ShowUsageAlert(alert, text, expiresAt, limitKey));
+        Show(Shorten(tag), expiresAt,
+            builder =>
+            {
+                // A toast-level argument: the toast body's click carries it (buttons inherit it).
+                if (accountKey is not null)
+                    builder.AddArgument(AccountKey, accountKey);
+                builder
+                    .AddText(Strings.AppTitle)
+                    .AddText(text)
+                    .AddButton(new ToastButton().SetContent(Strings.ToastOpenUsagePage).AddArgument(ActionKey, OpenUsagePageAction))
+                    .AddButton(new ToastButtonDismiss(Strings.ToastDismiss));
+            },
+            () => _fallback.ShowUsageAlert(alert, text, expiresAt, limitKey, accountKey));
     }
 
     /// <summary>Toast tags are limited to 64 characters; a limit's key is made of API names,
-    /// so it's shortened to a stable hash when it doesn't fit.</summary>
-    private static string LimitTag(string? limitKey)
+    /// so the tag is shortened to a stable hash when it doesn't fit.</summary>
+    private static string Shorten(string tag)
     {
-        var tag = "limit-" + (limitKey ?? "");
         if (tag.Length <= 64)
             return tag;
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(limitKey!)));
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(tag)));
         return "limit-" + hash[..32];
     }
 
@@ -142,8 +151,9 @@ internal sealed class ToastNotifier : INotifier
                 _ => NotificationAction.OpenFlyout,
             }
             : NotificationAction.OpenFlyout;
+        var account = arguments.TryGetValue(AccountKey, out string accountKey) ? accountKey : null;
 
-        _uiContext.Post(_ => _onAction(action), null);
+        _uiContext.Post(_ => _onAction(action, account), null);
     }
 
     /// <summary>Whether the app runs from the MSIX package (which brings its own notification

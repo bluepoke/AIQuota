@@ -72,6 +72,16 @@ public static class Strings
     public static string DialogOk => "OK";
     public static string DialogCancel => T("Abbrechen", "Cancel");
     public static string FlyoutSwitchAccount => T("Konto wechseln", "Switch account");
+
+    // Monitoring accounts in the background (#18)
+    public static string MenuMonitorInBackground => T("Im Hintergrund überwachen", "Monitor in background");
+    public static string MonitorActiveNote => T("Das aktive Konto wird immer abgerufen", "The active account is always fetched");
+    public static string MenuIconPerAccount => T("Ein Tray-Symbol pro überwachtem Konto", "One tray icon per monitored account");
+    public static string FlyoutOtherAccounts => T("Weitere Konten", "Other accounts");
+    public static string FlyoutSwitchToAccount(string name) => T($"Zu {name} wechseln", $"Switch to {name}");
+    public static string MiniDashboardShow => T("Anzeigen", "Show");
+    public static string MiniDashboardShowActive => T("Aktives Konto", "Active account");
+    public static string MiniDashboardShowAll => T("Alle überwachten Konten", "All monitored accounts");
     public static string MiniDashboardAccount => T("Konto", "Account");
 
     public static string MenuSessionEmpty => T("Sitzung (5h): –", "Session (5h): –");

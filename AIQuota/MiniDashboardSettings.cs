@@ -72,6 +72,9 @@ internal sealed class MiniDashboardSettings
     /// <summary>Moving and resizing are disabled.</summary>
     public bool Locked { get; set; }
 
+    /// <summary>Shows every monitored account as a group (#18) instead of only the active one.</summary>
+    public bool ShowAllAccounts { get; set; }
+
     public static MiniDashboardSettings Load()
     {
         var settings = new MiniDashboardSettings();
@@ -91,6 +94,7 @@ internal sealed class MiniDashboardSettings
             settings.OpacityPercent = opacity;
         settings.TopMost = key.GetValue("TopMost") is not int topMost || topMost != 0;
         settings.Locked = key.GetValue("Locked") is int locked && locked != 0;
+        settings.ShowAllAccounts = key.GetValue("ShowAllAccounts") is int showAll && showAll != 0;
 
         using var barsKey = Registry.CurrentUser.OpenSubKey(BarsKeyPath, writable: false);
         foreach (var account in barsKey?.GetValueNames() ?? [])
@@ -116,6 +120,7 @@ internal sealed class MiniDashboardSettings
         key.SetValue("Opacity", OpacityPercent, RegistryValueKind.DWord);
         key.SetValue("TopMost", TopMost ? 1 : 0, RegistryValueKind.DWord);
         key.SetValue("Locked", Locked ? 1 : 0, RegistryValueKind.DWord);
+        key.SetValue("ShowAllAccounts", ShowAllAccounts ? 1 : 0, RegistryValueKind.DWord);
 
         using var barsKey = Registry.CurrentUser.CreateSubKey(BarsKeyPath, writable: true);
         foreach (var (account, bars) in _accountBars)

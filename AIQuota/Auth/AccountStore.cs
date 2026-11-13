@@ -24,6 +24,10 @@ public sealed class SavedAccount
     /// <summary>When the account was added - the order of the account list.</summary>
     public DateTimeOffset AddedAt { get; init; }
 
+    /// <summary>Also polled while it isn't the active account, and shown next to it (#18).
+    /// The active account is always polled.</summary>
+    public bool MonitorInBackground { get; set; }
+
     /// <summary>The short name, else the profile's label; null if neither is known yet.</summary>
     public string? DisplayName => ShortName ?? Label;
 
@@ -50,6 +54,7 @@ public static class AccountStore
         if (root is null)
             return accounts;
 
+        // The account keys are the subkeys; values of the Accounts key itself are settings.
         foreach (var name in root.GetSubKeyNames())
         {
             using var key = root.OpenSubKey(name, writable: false);
@@ -64,6 +69,7 @@ public static class AccountStore
                 AddedAt = key.GetValue("AddedAt") is long ticks && ticks > 0
                     ? new DateTimeOffset(ticks, TimeSpan.Zero)
                     : DateTimeOffset.MinValue,
+                MonitorInBackground = key.GetValue("MonitorInBackground") is int monitor && monitor != 0,
             });
         }
         accounts.Sort((a, b) => a.AddedAt.CompareTo(b.AddedAt));
@@ -100,6 +106,21 @@ public static class AccountStore
         SetOrDelete(key, "Label", account.Label);
         SetOrDelete(key, "ShortName", account.ShortName);
         key.SetValue("AddedAt", account.AddedAt.UtcTicks, RegistryValueKind.QWord);
+        key.SetValue("MonitorInBackground", account.MonitorInBackground ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    /// <summary>One tray icon per monitored account instead of a single one (#18); off by
+    /// default.</summary>
+    public static bool LoadIconPerAccount()
+    {
+        using var root = Registry.CurrentUser.OpenSubKey(KeyPath, writable: false);
+        return root?.GetValue("IconPerAccount") is int value && value != 0;
+    }
+
+    public static void SaveIconPerAccount(bool enabled)
+    {
+        using var root = Registry.CurrentUser.CreateSubKey(KeyPath, writable: true);
+        root.SetValue("IconPerAccount", enabled ? 1 : 0, RegistryValueKind.DWord);
     }
 
     /// <summary>Removes the account and its token. Its usage history stays on disk.</summary>

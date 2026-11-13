@@ -27,7 +27,16 @@ internal sealed record FlyoutState(
     string? AccountKey = null,
     // More than one account is saved: the flyout and mini dashboard offer switching, and the
     // mini dashboard names the account.
-    bool CanSwitchAccount = false);
+    bool CanSwitchAccount = false,
+    // The other monitored accounts (#18), each as its own state (without history), in the
+    // account list's order: summary rows in the flyout, groups in the mini dashboard.
+    IReadOnlyList<FlyoutState>? OtherAccounts = null,
+    // The account's position in the account list, so views showing several accounts keep a
+    // fixed order regardless of which one is active.
+    int AccountOrder = 0)
+{
+    public IReadOnlyList<FlyoutState> Others => OtherAccounts ?? [];
+}
 
 /// <summary>
 /// Small borderless panel shown next to the tray icon on left-click, like the Windows volume
@@ -84,6 +93,8 @@ internal sealed class UsageFlyout : Form
     private Font _bodyFont = null!;
     private Font _smallFont = null!;
     private Font _iconFont = null!;
+    /// <summary>For the account button's "▾", which Segoe MDL2 Assets doesn't have.</summary>
+    private Font _caretFont = null!;
 
     // Chart geometry and points from the last paint, for hover hit-testing.
     private RectangleF _plot;
@@ -103,6 +114,15 @@ internal sealed class UsageFlyout : Form
 
     /// <summary>Also while the active account needs a new login, so another one can be picked.</summary>
     private bool ShowAccountButton => _state.CanSwitchAccount && CreateAccountItems is not null;
+
+    /// <summary>Switches to the account with this key - a click on another monitored
+    /// account's summary row (#18).</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public Action<string>? SwitchAccount { get; init; }
+
+    /// <summary>The other accounts' summary rows from the last layout, for hit-testing.</summary>
+    private List<(RectangleF Bounds, string Key)> _otherAccountRows = [];
+    private int? _hoverAccountRow;
 
     /// <param name="openMiniDashboard">Opens the mini dashboard (header button next to refresh).</param>
     /// <param name="openHeatmap">Opens the yearly heatmap (button next to the chart's title).</param>
@@ -167,7 +187,7 @@ internal sealed class UsageFlyout : Form
 
         _accountButton = new Button
         {
-            Text = "", // Segoe MDL2 Assets "ChevronDown"
+            Text = "▾", // "▾" in Segoe UI Symbol (see UpdateFonts)
             FlatStyle = FlatStyle.Flat,
             TabStop = true,
             UseVisualStyleBackColor = false,
@@ -272,6 +292,7 @@ internal sealed class UsageFlyout : Form
         _hiddenAt = Environment.TickCount64;
         _clockTimer.Stop();
         _hoverIndex = null;
+        _hoverAccountRow = null;
     }
 
     protected override CreateParams CreateParams
@@ -435,21 +456,23 @@ internal sealed class UsageFlyout : Form
         if (_fontScale == _scale && _titleFont is not null)
             return;
 
-        var (oldTitle, oldBody, oldSmall, oldIcon) = (_titleFont, _bodyFont, _smallFont, _iconFont);
+        var (oldTitle, oldBody, oldSmall, oldIcon, oldCaret) = (_titleFont, _bodyFont, _smallFont, _iconFont, _caretFont);
         _titleFont = new Font("Segoe UI Semibold", S(14f), FontStyle.Regular, GraphicsUnit.Pixel);
         _bodyFont = new Font("Segoe UI", S(12f), FontStyle.Regular, GraphicsUnit.Pixel);
         _smallFont = new Font("Segoe UI", S(11f), FontStyle.Regular, GraphicsUnit.Pixel);
         _iconFont = new Font("Segoe MDL2 Assets", S(14f), FontStyle.Regular, GraphicsUnit.Pixel);
+        _caretFont = new Font("Segoe UI Symbol", S(14f), FontStyle.Regular, GraphicsUnit.Pixel);
         _refreshButton.Font = _iconFont;
         _miniDashboardButton.Font = _iconFont;
         _heatmapButton.Font = _iconFont;
-        _accountButton.Font = _iconFont;
+        _accountButton.Font = _caretFont;
         _fontScale = _scale;
 
         oldTitle?.Dispose();
         oldBody?.Dispose();
         oldSmall?.Dispose();
         oldIcon?.Dispose();
+        oldCaret?.Dispose();
     }
 
     private void DisposeFonts()
@@ -458,6 +481,7 @@ internal sealed class UsageFlyout : Form
         _bodyFont?.Dispose();
         _smallFont?.Dispose();
         _iconFont?.Dispose();
+        _caretFont?.Dispose();
     }
 
     /// <summary>Places the flyout against the taskbar, next to where the tray icon was
@@ -572,32 +596,124 @@ internal sealed class UsageFlyout : Form
         y += S(1f) + S(12f);
 
         _historyTitle = RectangleF.Empty;
+        // The y below the content (the padding still to be added), and where the other accounts
+        // would start - null if there's no content below the header (logged in, but nothing
+        // fetched yet: the first refresh is running, or it failed - the header's status line
+        // says which).
+        float? bottom = null;
+        float? othersTop = null;
         if (!_state.LoggedIn)
         {
             DrawText(g, Strings.MenuNotLoggedIn, _bodyFont, _palette.Text, new RectangleF(left, y, width, S(20f)));
-            return y + S(20f) + S(Pad);
+            bottom = y + S(20f);
+            othersTop = bottom + S(14f);
+        }
+        else if (_state.Snapshot is { } snapshot)
+        {
+            // Session, week, additional limits and credits - the same sections the mini
+            // dashboard shows (see UsageSections / UsageBarRenderer).
+            var bars = Bars;
+            foreach (var section in UsageSections.Build(_state, now))
+                y = bars.DrawSection(g, section, _bodyFont, _titleFont, _bodyFont, left, y, width) + S(14f);
+
+            // 7-day chart
+            _historyTitle = new RectangleF(left, y, width / 2f, S(20f));
+            DrawText(g, Strings.FlyoutHistoryTitle, _titleFont, _palette.Text, _historyTitle);
+            DrawLegend(g, snapshot, left + width, y + S(10f));
+            y += S(20f) + S(8f);
+            DrawChart(g, new RectangleF(left + S(ChartLeftInset), y, width - S(ChartLeftInset), S(ChartHeight)), snapshot, now);
+            bottom = y + S(ChartHeight) + S(4f) + S(14f);
+            othersTop = bottom;
         }
 
-        // Logged in, but nothing fetched yet (first refresh running, or it failed - the
-        // header's status line says which).
-        if (_state.Snapshot is not { } snapshot)
-            return y - S(12f) + S(Pad);
+        _otherAccountRows = [];
+        if (_state.Others.Count > 0)
+            bottom = DrawOtherAccounts(g, left, width, othersTop ?? y, separator: othersTop is not null, now);
 
-        // Session, week, additional limits and credits - the same sections the mini
-        // dashboard shows (see UsageSections / UsageBarRenderer).
-        var bars = Bars;
-        foreach (var section in UsageSections.Build(_state, now))
-            y = bars.DrawSection(g, section, _bodyFont, _titleFont, _bodyFont, left, y, width) + S(14f);
+        // Without anything below the header, the flyout ends right below its separator.
+        return bottom is { } contentBottom ? contentBottom + S(Pad) : y - S(12f) + S(Pad);
+    }
 
-        // 7-day chart
-        _historyTitle = new RectangleF(left, y, width / 2f, S(20f));
-        DrawText(g, Strings.FlyoutHistoryTitle, _titleFont, _palette.Text, _historyTitle);
-        DrawLegend(g, snapshot, left + width, y + S(10f));
+    /// <summary>The other monitored accounts (#18), below everything else: per account its
+    /// name and status, and its session and week as compact bars - or why there are none
+    /// (login required, error, not fetched yet). A click on one switches to it. Returns the
+    /// y below the last one.</summary>
+    /// <param name="separator">Draw a separator first (there's content above).</param>
+    private float DrawOtherAccounts(Graphics? g, float left, float width, float y, bool separator, DateTimeOffset now)
+    {
+        if (separator)
+        {
+            if (g is not null)
+            {
+                using var pen = new Pen(_palette.Border, Math.Max(1f, S(1f)));
+                g.DrawLine(pen, 0, y, S(LogicalWidth), y);
+            }
+            y += S(1f) + S(12f);
+        }
+        DrawText(g, Strings.FlyoutOtherAccounts, _titleFont, _palette.Text, new RectangleF(left, y, width, S(20f)));
         y += S(20f) + S(8f);
-        DrawChart(g, new RectangleF(left + S(ChartLeftInset), y, width - S(ChartLeftInset), S(ChartHeight)), snapshot, now);
-        y += S(ChartHeight) + S(4f) + S(14f);
 
-        return y + S(Pad);
+        var bars = Bars;
+        var rowHeight = S(20f);
+        var labelWidth = Math.Max(TextRenderer.MeasureText(Strings.FlyoutSessionTitle, _smallFont).Width,
+            TextRenderer.MeasureText(Strings.FlyoutWeekTitle, _smallFont).Width) + S(2f);
+        var valueWidth = TextRenderer.MeasureText("100%", _smallFont).Width + S(2f);
+
+        foreach (var other in _state.Others)
+        {
+            var sections = UsageSections.Build(other, now)
+                .Where(s => s.Key is UsageSections.SessionKey or UsageSections.WeekKey)
+                .ToList();
+            var height = S(20f) + (sections.Count > 0 ? sections.Count * rowHeight + (sections.Count - 1) * S(2f) : S(18f));
+            var block = new RectangleF(left - S(8f), y - S(4f), width + S(16f), height + S(8f));
+            var index = _otherAccountRows.Count;
+            _otherAccountRows.Add((block, other.AccountKey ?? ""));
+
+            if (g is not null && _hoverAccountRow == index)
+            {
+                using var path = RoundedRect(block, S(6f));
+                using var hover = new SolidBrush(_palette.Hover);
+                g.FillPath(hover, path);
+            }
+
+            // Name on the left, status (or "refreshing") on the right.
+            var status = other.IsRefreshing ? Strings.FlyoutRefreshing : other.StatusText;
+            var statusWidth = Math.Min(TextRenderer.MeasureText(status, _smallFont).Width + S(2f), width * 0.55f);
+            DrawText(g, other.AccountLabel ?? Strings.AccountUnnamed, _bodyFont, _palette.Text, new RectangleF(left, y, width - statusWidth - S(8f), S(20f)));
+            DrawText(g, status, _smallFont, other.HasError ? _palette.Text : _palette.Secondary,
+                new RectangleF(left + width - statusWidth, y + S(1f), statusWidth, S(18f)), TextFormatFlags.Right);
+            var rowsTop = y + S(20f);
+
+            if (sections.Count > 0)
+            {
+                for (var i = 0; i < sections.Count; i++)
+                    bars.DrawCompactRow(g, sections[i], _smallFont, _smallFont, left, rowsTop + i * (rowHeight + S(2f)), width, labelWidth, valueWidth, rowHeight);
+            }
+            else
+            {
+                var reason = other.LoggedIn ? other.StatusText : Strings.MenuNotLoggedIn;
+                DrawText(g, reason, _smallFont, _palette.Secondary, new RectangleF(left, rowsTop, width, S(18f)));
+            }
+            y += height + S(14f);
+        }
+        return y - S(14f) + S(4f);
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        if (e.Button == MouseButtons.Left && AccountRowAt(e.Location) is { } row && SwitchAccount is { } switchAccount)
+            switchAccount(_otherAccountRows[row].Key);
+    }
+
+    private int? AccountRowAt(Point location)
+    {
+        for (var i = 0; i < _otherAccountRows.Count; i++)
+        {
+            if (_otherAccountRows[i].Bounds.Contains(location))
+                return i;
+        }
+        return null;
     }
 
     /// <summary>The shared bar renderer for the current palette and scale.</summary>
@@ -803,14 +919,25 @@ internal sealed class UsageFlyout : Form
             _hoverIndex = hover;
             Invalidate();
         }
+
+        // Another account's summary row: highlighted and clickable (#18).
+        var accountRow = SwitchAccount is null ? null : AccountRowAt(e.Location);
+        if (accountRow != _hoverAccountRow)
+        {
+            _hoverAccountRow = accountRow;
+            Cursor = accountRow is null ? Cursors.Default : Cursors.Hand;
+            Invalidate();
+        }
     }
 
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
-        if (_hoverIndex is not null)
+        if (_hoverIndex is not null || _hoverAccountRow is not null)
         {
             _hoverIndex = null;
+            _hoverAccountRow = null;
+            Cursor = Cursors.Default;
             Invalidate();
         }
     }

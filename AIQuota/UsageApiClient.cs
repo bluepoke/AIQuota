@@ -64,7 +64,10 @@ public enum UsageFetchStatus
     NetworkError,
 }
 
-public sealed record UsageFetchResult(UsageFetchStatus Status, UsageSnapshot? Snapshot, string? Error = null);
+/// <param name="RateLimited">The API answered 429: the caller should wait longer than usual
+/// before asking for this account again - at least <paramref name="RetryAfter"/> if given.</param>
+public sealed record UsageFetchResult(UsageFetchStatus Status, UsageSnapshot? Snapshot, string? Error = null,
+    bool RateLimited = false, TimeSpan? RetryAfter = null);
 
 /// <summary>
 /// Calls the same GET /api/oauth/usage endpoint the official Claude Code CLI uses to
@@ -89,6 +92,17 @@ public sealed class UsageApiClient(OAuthClient oauth)
             using var response = await _http.SendAsync(request, cancellationToken);
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                 return new UsageFetchResult(UsageFetchStatus.AuthExpired, null);
+            if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            {
+                var retryAfter = response.Headers.RetryAfter switch
+                {
+                    { Delta: { } delta } => delta,
+                    { Date: { } date } => date - DateTimeOffset.UtcNow,
+                    _ => (TimeSpan?)null,
+                };
+                return new UsageFetchResult(UsageFetchStatus.NetworkError, null, "HTTP 429",
+                    RateLimited: true, RetryAfter: retryAfter > TimeSpan.Zero ? retryAfter : null);
+            }
             if (!response.IsSuccessStatusCode)
                 return new UsageFetchResult(UsageFetchStatus.NetworkError, null, $"HTTP {(int)response.StatusCode}");
 

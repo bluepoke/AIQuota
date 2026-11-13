@@ -34,6 +34,8 @@ internal sealed class MiniDashboard : Form
     private const float RowHeight = 22f;
     private const float RowGap = 4f;
     private const float SectionGap = 10f;
+    /// <summary>Between the accounts in "All monitored accounts" (#18).</summary>
+    private const float GroupGap = 14f;
     private const float HeaderHeight = 24f;
     /// <summary>Size of the compact layout's close button; the rows leave room for it.</summary>
     private const float CompactCloseSize = 20f;
@@ -341,14 +343,32 @@ internal sealed class MiniDashboard : Form
     /// <summary>The selected sections that currently exist, in the flyout's order. If none of
     /// the selected bars is reported at the moment (e.g. only "Credits" is selected and the
     /// plan has none), the session and the week are shown instead of an empty window.</summary>
-    private List<UsageSection> SelectedSections(DateTimeOffset now)
+    private List<UsageSection> SelectedSections(DateTimeOffset now) => SelectedSections(_state, now);
+
+    /// <summary><see cref="SelectedSections(DateTimeOffset)"/> for any account shown, with
+    /// that account's bar selection.</summary>
+    private List<UsageSection> SelectedSections(FlyoutState state, DateTimeOffset now)
     {
-        var all = UsageSections.Build(_state, now);
-        var selected = all.Where(s => SelectedBars.Contains(s.Key)).ToList();
+        var all = UsageSections.Build(state, now);
+        var bars = _settings.BarsFor(state.AccountKey);
+        var selected = all.Where(s => bars.Contains(s.Key)).ToList();
         return selected.Count > 0
             ? selected
             : all.Where(s => s.Key is UsageSections.SessionKey or UsageSections.WeekKey).ToList();
     }
+
+    /// <summary>The accounts shown: the active one, and with "All monitored accounts" every
+    /// other monitored one (#18) - in the account list's order, so switching accounts doesn't
+    /// reorder them.</summary>
+    private IReadOnlyList<FlyoutState> ShownAccounts =>
+        _settings.ShowAllAccounts && _state.Others.Count > 0
+            ? [.. _state.Others.Append(_state).OrderBy(a => a.AccountOrder)]
+            : [_state];
+
+    private static string StatusOf(FlyoutState state) =>
+        !state.LoggedIn ? Strings.MenuNotLoggedIn
+        : state.IsRefreshing ? Strings.FlyoutRefreshing
+        : state.StatusText;
 
     private string StatusText => _state.IsRefreshing ? Strings.FlyoutRefreshing : _state.StatusText;
 
@@ -396,6 +416,9 @@ internal sealed class MiniDashboard : Form
                 new RectangleF(left, y, width - S(2 * HeaderHeight), S(HeaderHeight)));
             y += S(HeaderHeight) + S(6f);
         }
+
+        if (ShownAccounts is { Count: > 1 } accounts)
+            return DrawAccountGroups(g, bars, accounts, left, width, y, now) + S(Pad);
 
         if (!_state.LoggedIn)
         {
@@ -445,17 +468,94 @@ internal sealed class MiniDashboard : Form
         return y + S(Pad);
     }
 
+    /// <summary>"All monitored accounts" with more than one account to show (#18): a group per
+    /// account - its name (and status, unless it's simply up to date) followed by its selected
+    /// bars, compact or expanded. In the compact layout with a single bar per account, each
+    /// account is just one row, labelled with its name. Returns the y below the last group.</summary>
+    private float DrawAccountGroups(Graphics? g, UsageBarRenderer bars, IReadOnlyList<FlyoutState> accounts,
+        float left, float width, float y, DateTimeOffset now)
+    {
+        var groups = accounts
+            .Select(a => (State: a, Name: a.AccountLabel ?? Strings.AccountUnnamed, Sections: SelectedSections(a, now)))
+            .ToList();
+        var valueWidth = TextRenderer.MeasureText("100%", _valueFont).Width + S(2f);
+
+        // Compact, one bar each: one row per account.
+        if (!_settings.Expanded && groups.All(group => group.Sections.Count <= 1))
+        {
+            var nameWidth = Math.Min(groups.Max(group => TextRenderer.MeasureText(group.Name, _labelFont).Width) + S(2f), width * 0.45f);
+            foreach (var (state, name, sections) in groups)
+            {
+                if (sections is [var section])
+                {
+                    bars.DrawCompactRow(g, section with { Label = name }, _labelFont, _valueFont, left, y, width, nameWidth, valueWidth, S(RowHeight));
+                }
+                else
+                {
+                    UsageBarRenderer.DrawText(g, name, _labelFont, _palette.Text, new RectangleF(left, y, nameWidth, S(RowHeight)));
+                    UsageBarRenderer.DrawText(g, StatusOf(state), _smallFont, _palette.Secondary,
+                        new RectangleF(left + nameWidth + S(8f), y, width - nameWidth - S(8f), S(RowHeight)));
+                }
+                y += S(RowHeight) + S(RowGap);
+            }
+            return y - S(RowGap);
+        }
+
+        var labelWidth = Math.Min(
+            groups.SelectMany(group => group.Sections).Select(s => TextRenderer.MeasureText(s.Label, _labelFont).Width).DefaultIfEmpty(0).Max() + S(2f),
+            width * 0.45f);
+        foreach (var (state, name, sections) in groups)
+        {
+            // Heading: the name, and the status when there's something to say (error, login,
+            // not fetched yet) - the active account's time is in the expanded header already.
+            var showStatus = state.HasError || !state.LoggedIn || sections.Count == 0;
+            var nameWidth = showStatus ? Math.Min(TextRenderer.MeasureText(name, _titleFont).Width + S(2f), width * 0.6f) : width;
+            UsageBarRenderer.DrawText(g, name, _titleFont, _palette.Text, new RectangleF(left, y, nameWidth, S(RowHeight)));
+            if (showStatus)
+            {
+                UsageBarRenderer.DrawText(g, StatusOf(state), _smallFont, _palette.Secondary,
+                    new RectangleF(left + nameWidth + S(6f), y, width - nameWidth - S(6f), S(RowHeight)));
+            }
+            y += S(RowHeight);
+
+            foreach (var section in sections)
+            {
+                if (_settings.Expanded)
+                {
+                    y = bars.DrawSection(g, section, _labelFont, _titleFont, _labelFont, left, y + S(RowGap), width) + S(SectionGap) - S(RowGap);
+                }
+                else
+                {
+                    bars.DrawCompactRow(g, section, _labelFont, _valueFont, left, y + S(RowGap), width, labelWidth, valueWidth, S(RowHeight));
+                    y += S(RowGap) + S(RowHeight);
+                }
+            }
+            if (_settings.Expanded && sections.Count > 0)
+                y -= S(SectionGap) - S(RowGap);
+            y += S(GroupGap);
+        }
+        return y - S(GroupGap);
+    }
+
     /// <summary>The values as text for screen readers, e.g. "Session (5h) 37%, Resets 14:30 ·
-    /// in 1.6h; Week 62%, …".</summary>
+    /// in 1.6h; Week 62%, …" - per account, with its name, while several are shown.</summary>
     private string DescribeForScreenReaders()
     {
-        if (!_state.LoggedIn)
-            return Strings.MenuNotLoggedIn;
-        var sections = SelectedSections(DateTimeOffset.Now);
-        if (sections.Count == 0)
-            return StatusText;
-        return string.Join("; ", sections.Select(s =>
-            $"{s.Label} {s.Percent}%" + (s.Details.Count > 0 ? ", " + s.Details[0].Text : "")));
+        var accounts = ShownAccounts;
+        return accounts.Count > 1
+            ? string.Join(". ", accounts.Select(a => $"{a.AccountLabel}: {Describe(a)}"))
+            : Describe(_state);
+
+        string Describe(FlyoutState state)
+        {
+            if (!state.LoggedIn)
+                return Strings.MenuNotLoggedIn;
+            var sections = SelectedSections(state, DateTimeOffset.Now);
+            if (sections.Count == 0)
+                return StatusOf(state);
+            return string.Join("; ", sections.Select(s =>
+                $"{s.Label} {s.Percent}%" + (s.Details.Count > 0 ? ", " + s.Details[0].Text : "")));
+        }
     }
 
     // ---------------------------------------------------------------- menu
@@ -500,6 +600,12 @@ internal sealed class MiniDashboard : Form
             var account = new ToolStripMenuItem(Strings.MiniDashboardAccount);
             account.DropDownItems.AddRange([.. createAccountItems()]);
             _menu.Items.Add(account);
+
+            // The active account only, or every monitored one (#18).
+            var show = new ToolStripMenuItem(Strings.MiniDashboardShow);
+            show.DropDownItems.Add(new ToolStripMenuItem(Strings.MiniDashboardShowActive, null, (_, _) => SetShowAllAccounts(false)) { Checked = !_settings.ShowAllAccounts });
+            show.DropDownItems.Add(new ToolStripMenuItem(Strings.MiniDashboardShowAll, null, (_, _) => SetShowAllAccounts(true)) { Checked = _settings.ShowAllAccounts });
+            _menu.Items.Add(show);
         }
         _menu.Items.Add(new ToolStripMenuItem(Strings.MenuRefresh, null, async (_, _) => await _refresh()) { Enabled = _state is { LoggedIn: true, IsRefreshing: false } });
         _menu.Items.Add(new ToolStripMenuItem(Strings.MiniDashboardOpenFlyout, null, (_, _) => _openFlyout()));
@@ -522,6 +628,12 @@ internal sealed class MiniDashboard : Form
             bars.Add(key);
         }
         _settings.SetBars(_state.AccountKey, bars);
+        ApplySettingChange();
+    }
+
+    private void SetShowAllAccounts(bool showAll)
+    {
+        _settings.ShowAllAccounts = showAll;
         ApplySettingChange();
     }
 

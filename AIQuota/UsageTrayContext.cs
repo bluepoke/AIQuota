@@ -6,7 +6,11 @@ using AIQuota.StreamDock;
 
 namespace AIQuota;
 
-public sealed class UsageTrayContext : ApplicationContext
+/// <summary>
+/// The tray app: icon, menu, polling and notifications for the active account. Monitoring
+/// further accounts in the background (#18) is in <c>UsageTrayContext.Background.cs</c>.
+/// </summary>
+public sealed partial class UsageTrayContext : ApplicationContext
 {
     private enum IconKind { Unavailable, Warning, Usage, Refreshing }
 
@@ -66,7 +70,9 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly ToolStripMenuItem _historyExportDailyItem;
     private readonly ToolStripMenuItem _historyClearItem;
 
-    private readonly IUsageHistory _history = new JsonlUsageHistory();
+    /// <summary>The active account's history - one of <see cref="_histories"/>, shared with
+    /// background monitoring so an account's file is only ever written by one instance.</summary>
+    private IUsageHistory _history;
     private readonly SynchronizationContext _uiContext;
     private StreamDockBridge? _streamDockBridge;
     private UsageFlyout? _flyout;
@@ -87,8 +93,9 @@ public sealed class UsageTrayContext : ApplicationContext
         public readonly HashSet<string> LimitWarningsShown = [];
     }
 
-    /// <summary>The saved accounts (#13), oldest first, and the one that's shown and polled.
-    /// Only the active account is ever fetched.</summary>
+    /// <summary>The saved accounts (#13), oldest first, and the one that's shown in the menu,
+    /// tooltip, flyout and heatmap. Other accounts are only fetched if they're monitored in
+    /// the background (#18).</summary>
     private readonly List<SavedAccount> _accounts;
     private SavedAccount? _active;
 
@@ -111,6 +118,10 @@ public sealed class UsageTrayContext : ApplicationContext
     private readonly List<ToolStripMenuItem> _limitItems = [];
     private bool _refreshInProgress;
     private bool _loginInProgress;
+
+    /// <summary>After a 429 for the active account, the timer skips polls until then.</summary>
+    private DateTimeOffset _activeBackoffUntil;
+    private int _activeRateLimitStrikes;
     private bool _newVersionCheckInProgress;
     private bool _updateInProgress;
 
@@ -168,6 +179,7 @@ public sealed class UsageTrayContext : ApplicationContext
             SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
         _uiContext = SynchronizationContext.Current!;
         _usageApi = new UsageApiClient(_oauth);
+        _history = HistoryFor(null);
 
         AccountStore.MigrateLegacyToken();
         _accounts = AccountStore.LoadAll();
@@ -238,6 +250,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _settingsMenu.DropDownItems.Add(_showSessionRingItem);
         _settingsMenu.DropDownItems.Add(_showWeeklyPaceItem);
         _settingsMenu.DropDownItems.Add(_accessibilityModeItem);
+        _settingsMenu.DropDownItems.Add(_iconPerAccountItem);
         _settingsMenu.DropDownItems.Add(_streamDockItem);
         _settingsMenu.DropDownItems.Add(_checkForNewVersionItem);
         _settingsMenu.DropDownItems.Add(_languageMenu);
@@ -290,11 +303,17 @@ public sealed class UsageTrayContext : ApplicationContext
         // Left-click opens the flyout. A double-click no longer refreshes (the flyout's refresh
         // button and "Refresh now" do that): the flyout must open on the first click without
         // waiting to see whether a second one follows, and keeps open on the second.
+        _notifyIcon.MouseDown += OnNotifyIconMouseDown;
         _notifyIcon.MouseClick += OnNotifyIconMouseClick;
         _notifier = ToastNotifier.Create(_notifyIcon, OnNotificationAction, _uiContext);
 
         _timer = new System.Windows.Forms.Timer { Interval = (int)PollInterval.TotalMilliseconds };
-        _timer.Tick += async (_, _) => await RefreshAsync();
+        _timer.Tick += async (_, _) =>
+        {
+            // After a 429, wait as long as the API asked (see UsageFetchResult.RateLimited).
+            if (DateTimeOffset.Now >= _activeBackoffUntil)
+                await RefreshAsync();
+        };
         _timer.Start();
 
         _newVersionCheckTimer = new System.Windows.Forms.Timer { Interval = (int)NewVersionCheckInterval.TotalMilliseconds };
@@ -311,6 +330,7 @@ public sealed class UsageTrayContext : ApplicationContext
 
         ApplyStaticMenuTexts();
         LoadActiveAccount();
+        StartBackgroundMonitoring();
         if (_streamDockItem.Checked)
             StartStreamDockBridge();
         if (_miniDashboardSettings.IsOpen)
@@ -322,6 +342,7 @@ public sealed class UsageTrayContext : ApplicationContext
     private void ApplyStaticMenuTexts()
     {
         UpdateAccountMenu();
+        _iconPerAccountItem.Text = Strings.MenuIconPerAccount;
         _sessionItem.Text = Strings.MenuSessionEmpty;
         _weeklyItem.Text = Strings.MenuWeeklyEmpty;
         _statusItem.Text = Strings.MenuNotLoggedIn;
@@ -504,9 +525,10 @@ public sealed class UsageTrayContext : ApplicationContext
         if (account == _active)
         {
             _accountId = account.AccountId;
-            _history.SetAccount(_accountId);
+            _history = HistoryFor(_accountId);
         }
         UpdateAccountMenu();
+        SyncBackgroundAccounts();
         return account;
     }
 
@@ -518,6 +540,9 @@ public sealed class UsageTrayContext : ApplicationContext
         AccountStore.SaveActiveKey(account?.Key);
         _generation++;
         LoadActiveAccount();
+        // The previous account continues in the background if it's monitored; the new one
+        // isn't fetched in the background any more.
+        SyncBackgroundAccounts();
     }
 
     /// <summary>Shows the active account: its history, forecasts and notification state, and
@@ -527,7 +552,7 @@ public sealed class UsageTrayContext : ApplicationContext
     {
         _alerts = _active is null ? new AlertState() : AlertStateFor(_active);
         _accountId = _active?.AccountId;
-        _history.SetAccount(_accountId);
+        _history = HistoryFor(_accountId);
         ShowLastKnownUsage();
         UpdateAccountMenu();
         UpdateLoginMenuState();
@@ -551,7 +576,7 @@ public sealed class UsageTrayContext : ApplicationContext
             return;
         }
 
-        if ((_lastSnapshots.GetValueOrDefault(_active!.Key) ?? SnapshotFromHistory()) is { } snapshot)
+        if ((_lastSnapshots.GetValueOrDefault(_active!.Key) ?? SnapshotFromHistory(_history.Records)) is { } snapshot)
         {
             ApplySnapshot(snapshot, live: false);
             return;
@@ -564,37 +589,32 @@ public sealed class UsageTrayContext : ApplicationContext
         SetNotifyIconText(Strings.TooltipLoadingAccount(ActiveName));
     }
 
-    private UsageSnapshot? SnapshotFromHistory()
-    {
-        if (_history.Records is not [.., var last])
-            return null;
-
-        var now = DateTimeOffset.Now;
-        var sessionOver = last.SessionResetsAt is { } sessionReset && sessionReset <= now;
-        var weekOver = last.WeekResetsAt is { } weekReset && weekReset <= now;
-        var session = sessionOver ? 0 : Math.Clamp(last.Session, 0, 100);
-        var week = weekOver ? 0 : Math.Clamp(last.Week, 0, 100);
-        return new UsageSnapshot(
-            (int)Math.Round(session), (int)Math.Round(week),
-            sessionOver ? null : last.SessionResetsAt, weekOver ? null : last.WeekResetsAt,
-            last.Time, last.CreditUsed, last.CreditLimit, last.CreditCurrency, session, week);
-    }
-
+    /// <summary>Makes the account the active one. It's only fetched right away if its values
+    /// aren't recent - e.g. a monitored account fetched in the background a minute ago is
+    /// just shown (#18).</summary>
     private async Task SwitchAccountAsync(SavedAccount account)
     {
         if (account == _active && account.HasToken)
             return;
+        var fetchedRecently = FetchedRecently(account);
         if (account != _active)
         {
             ActivateAccount(account);
             UpdateFlyout();
         }
 
-        if (account.HasToken)
-            await RefreshAsync();
-        else
+        if (!account.HasToken)
             await LoginAsync(account);
+        else if (!fetchedRecently)
+            await RefreshAsync();
     }
+
+    /// <summary>Successfully fetched within the poll interval, and the last fetch didn't
+    /// fail since.</summary>
+    private bool FetchedRecently(SavedAccount account) =>
+        _lastSnapshots.TryGetValue(account.Key, out var snapshot)
+        && DateTimeOffset.Now - snapshot.FetchedAt < PollInterval
+        && (!_backgroundAccounts.TryGetValue(account.Key, out var background) || background.Status == UsageFetchStatus.Ok);
 
     private void OnRenameAccountClicked()
     {
@@ -636,6 +656,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _lastSnapshots.Remove(account.Key);
         _resolvedAccounts.Remove(account.Key);
         _miniDashboardSettings.RemoveAccount(account.Key);
+        SyncBackgroundAccounts();
     }
 
     /// <summary>The "Logged in as …" entry; its submenu is rebuilt when it opens.</summary>
@@ -656,6 +677,12 @@ public sealed class UsageTrayContext : ApplicationContext
         _accountMenu.DropDownItems.AddRange([.. CreateAccountItems(withManagement: true)]);
     }
 
+    /// <summary>"Work – Name (email)" with a short name, else the short name or label.</summary>
+    private static string AccountMenuName(SavedAccount account) =>
+        account is { ShortName: { } shortName, Label: { } label }
+            ? $"{shortName} – {label}"
+            : account.DisplayName ?? Strings.AccountUnnamed;
+
     /// <summary>The account list (active one checked, a click switches) and "Add account…" -
     /// for the tray menu, the flyout's ▾ button and the mini dashboard's menu. <paramref
     /// name="withManagement"/> adds "Rename…" and "Remove active account…".</summary>
@@ -664,9 +691,7 @@ public sealed class UsageTrayContext : ApplicationContext
         var items = new List<ToolStripItem>();
         foreach (var account in _accounts)
         {
-            var name = account is { ShortName: { } shortName, Label: { } label }
-                ? $"{shortName} – {label}"
-                : account.DisplayName ?? Strings.AccountUnnamed;
+            var name = AccountMenuName(account);
             if (!account.HasToken)
                 name += Strings.AccountLoginRequiredSuffix;
             var item = new ToolStripMenuItem(name) { Checked = account == _active, Enabled = !_loginInProgress };
@@ -678,6 +703,7 @@ public sealed class UsageTrayContext : ApplicationContext
         items.Add(new ToolStripMenuItem(Strings.MenuAddAccount, null, async (_, _) => await LoginAsync(null)) { Enabled = !_loginInProgress });
         if (withManagement)
         {
+            items.Add(CreateMonitorMenu());
             items.Add(new ToolStripMenuItem(Strings.MenuRenameAccount, null, (_, _) => OnRenameAccountClicked()) { Enabled = _active is not null });
             items.Add(new ToolStripMenuItem(Strings.MenuRemoveAccount, null, async (_, _) => await RemoveActiveAccountAsync()) { Enabled = _active is not null && !_loginInProgress });
         }
@@ -781,9 +807,14 @@ public sealed class UsageTrayContext : ApplicationContext
         if (answer != DialogResult.Yes)
             return;
 
+        // Deletes every account's files; the cached instances are dropped and reloaded empty.
         _history.Clear();
+        _histories.Clear();
+        _history = HistoryFor(_accountId);
         ResetForecasts();
         _alerts.SessionForecastWarningShown = false;
+        foreach (var background in _backgroundAccounts.Values)
+            (background.SessionForecast, background.WeeklyForecast) = (UsageForecast.None, UsageForecast.None);
         if (_currentIconKind == IconKind.Usage && _lastUsageSnapshot is { } snapshot)
             ApplyUsageTooltip(snapshot);
         UpdateFlyout();
@@ -815,12 +846,21 @@ public sealed class UsageTrayContext : ApplicationContext
     {
         if (e.Button != MouseButtons.Left)
             return;
+        // A click on another account's icon (#18) switched accounts in MouseDown: show that
+        // account rather than closing the flyout of the previous one.
+        if (_switchedByIconClick)
+        {
+            _switchedByIconClick = false;
+            Flyout.Open(Cursor.Position);
+            return;
+        }
         Flyout.Toggle(Cursor.Position);
     }
 
     private UsageFlyout Flyout => _flyout ??= new UsageFlyout(BuildFlyoutState, RefreshAsync, ShowMiniDashboard, ShowHeatmap)
     {
         CreateAccountItems = () => CreateAccountItems(withManagement: false),
+        SwitchAccount = key => _ = SwitchAccountByKeyAsync(key),
     };
 
     /// <summary>Shows the mini dashboard (see <see cref="MiniDashboard"/>) and remembers that
@@ -852,8 +892,9 @@ public sealed class UsageTrayContext : ApplicationContext
     /// <summary>A button or the body of a notification was clicked (see <see
     /// cref="INotifier"/>). Only the new-version notification's "Install…" leads to the
     /// update flow - and only if an update is still pending, e.g. not after the app was
-    /// restarted by a click on an old notification.</summary>
-    private void OnNotificationAction(NotificationAction action)
+    /// restarted by a click on an old notification. A click on a usage notification of an
+    /// account that isn't the active one switches to it first (#18).</summary>
+    private async void OnNotificationAction(NotificationAction action, string? accountKey)
     {
         switch (action)
         {
@@ -864,7 +905,11 @@ public sealed class UsageTrayContext : ApplicationContext
                 OnNewVersionClicked();
                 break;
             default:
+                var switchTask = accountKey is not null && accountKey != _active?.Key
+                    ? SwitchAccountByKeyAsync(accountKey)
+                    : Task.CompletedTask;
                 Flyout.Open(Cursor.Position);
+                await switchTask;
                 break;
         }
     }
@@ -913,8 +958,10 @@ public sealed class UsageTrayContext : ApplicationContext
         History: _history.Records,
         Greyscale: GreyscaleActive,
         HasError: _currentIconKind == IconKind.Warning,
+        OtherAccounts: BuildOtherAccountStates(),
         AccountKey: _active?.Key,
-        CanSwitchAccount: MultipleAccounts);
+        CanSwitchAccount: MultipleAccounts,
+        AccountOrder: _active is null ? 0 : _accounts.IndexOf(_active));
 
     private void OnToggleSessionRing(object? sender, EventArgs e)
     {
@@ -1115,6 +1162,12 @@ public sealed class UsageTrayContext : ApplicationContext
         if (generation != _generation)
             return;
 
+        // Rate limited: the timer skips polls for a while (doubling each time in a row).
+        _activeRateLimitStrikes = result.RateLimited ? _activeRateLimitStrikes + 1 : 0;
+        _activeBackoffUntil = result.RateLimited
+            ? DateTimeOffset.Now + BackgroundAccount.DelayAfter(result, _activeRateLimitStrikes, PollInterval) - TimeSpan.FromSeconds(30)
+            : DateTimeOffset.MinValue;
+
         // The account is resolved before the result is applied, so the very first fetch
         // already lands in the right account's history and feeds the forecast.
         if (result.Status == UsageFetchStatus.Ok)
@@ -1207,9 +1260,7 @@ public sealed class UsageTrayContext : ApplicationContext
         _lastWeeklyResetsAt = snapshot.WeeklyResetsAt;
         _lastUsageSnapshot = snapshot;
 
-        int? creditPercent = snapshot is { CreditUsed: { } creditUsedForPercent, CreditLimit: > 0 and { } creditLimitForPercent }
-            ? (int)Math.Round(Math.Clamp(creditUsedForPercent / creditLimitForPercent * 100m, 0, 100))
-            : null;
+        var creditPercent = CreditPercentOf(snapshot);
         _lastCreditPercent = creditPercent;
 
         UpdateForecasts(snapshot);
@@ -1275,19 +1326,24 @@ public sealed class UsageTrayContext : ApplicationContext
     /// forecast while no session is running.</summary>
     private void UpdateForecasts(UsageSnapshot snapshot)
     {
-        var now = DateTimeOffset.Now;
-        var records = _history.Records;
+        (_sessionForecast, _weeklyForecast) = ComputeForecasts(_history.Records, snapshot, DateTimeOffset.Now);
+        ApplyForecastMenuTexts();
+    }
 
-        _sessionForecast = SessionNotStarted
+    /// <summary>The session and week burn-rate forecasts of an account from its history - for
+    /// the active account and the ones monitored in the background alike.</summary>
+    private static (UsageForecast Session, UsageForecast Week) ComputeForecasts(
+        IReadOnlyList<UsageHistoryRecord> records, UsageSnapshot snapshot, DateTimeOffset now)
+    {
+        var session = snapshot.SessionResetsAt is null
             ? UsageForecast.None
             : BurnRateForecaster.Forecast(
                 records.Select(r => new UsagePoint(r.Time, r.Session, r.SessionResetsAt)),
                 snapshot.SessionResetsAt, BurnRateForecaster.Session, now);
-        _weeklyForecast = BurnRateForecaster.Forecast(
+        var week = BurnRateForecaster.Forecast(
             records.Select(r => new UsagePoint(r.Time, r.Week, r.WeekResetsAt)),
             snapshot.WeeklyResetsAt, BurnRateForecaster.Week, now);
-
-        ApplyForecastMenuTexts();
+        return (session, week);
     }
 
     /// <summary>Shows each forecast as an indented line under its session/week menu entry:
@@ -1332,10 +1388,12 @@ public sealed class UsageTrayContext : ApplicationContext
         _weeklyItem.Text = Strings.WeeklyLabel(snapshot.WeeklyPercent, Strings.FormatReset(snapshot.WeeklyResetsAt))
             + Strings.PaceSuffix(WeeklyPacePercent);
 
+    /// <summary>Sets the active account's tray icon (with one icon per account, its own).</summary>
     private void SetIcon(Icon icon)
     {
-        var old = _notifyIcon.Icon;
-        _notifyIcon.Icon = icon;
+        var notifyIcon = ActiveNotifyIcon;
+        var old = notifyIcon.Icon;
+        notifyIcon.Icon = icon;
         old?.Dispose();
         DeckStatusHolder.Current = BuildDeckStatusSnapshot();
     }
@@ -1370,6 +1428,7 @@ public sealed class UsageTrayContext : ApplicationContext
             _ => TrayIconFactory.CreateUnavailableIcon(palette, HasUpdate),
         };
         SetIcon(icon);
+        RedrawBackgroundIcons();
     }
 
     /// <summary><see cref="ComputeSessionRemainingFraction"/> for the countdown ring drawn
@@ -1426,9 +1485,16 @@ public sealed class UsageTrayContext : ApplicationContext
 
     private void ApplyTooltipText()
     {
-        var text = _tooltipCandidates.Select(WithUpdateLine).FirstOrDefault(t => t.Length <= MaxTooltipLength)
-            ?? WithUpdateLine(_tooltipCandidates[^1]);
-        _notifyIcon.Text = Truncate(text, MaxTooltipLength);
+        ActiveNotifyIcon.Text = FitTooltip(_tooltipCandidates);
+    }
+
+    /// <summary>The first candidate that fits in <see cref="MaxTooltipLength"/> together with
+    /// the update line, else the last one, truncated.</summary>
+    private string FitTooltip(IReadOnlyList<string> candidates)
+    {
+        var text = candidates.Select(WithUpdateLine).FirstOrDefault(t => t.Length <= MaxTooltipLength)
+            ?? WithUpdateLine(candidates[^1]);
+        return Truncate(text, MaxTooltipLength);
     }
 
     private string WithUpdateLine(string text) =>
@@ -1436,15 +1502,26 @@ public sealed class UsageTrayContext : ApplicationContext
             ? $"{text}\n{Strings.TooltipUpdateAvailable(update.Version)}"
             : text;
 
-    /// <summary>Notifies about the active account's usage; the state of what has been
-    /// notified is kept per account (<see cref="AlertState"/>).</summary>
+    /// <summary>Notifies about the active account's usage.</summary>
     private void MaybeWarn(UsageSnapshot snapshot)
     {
-        var alerts = _alerts;
+        if (_active is not null)
+            MaybeWarn(snapshot, _active, _alerts, _sessionForecast);
+    }
+
+    /// <summary>Notifies about an account's usage - the active one or one monitored in the
+    /// background (#18). What has been notified is kept per account (<see cref="AlertState"/>),
+    /// and each account's notifications replace only its own.</summary>
+    private void MaybeWarn(UsageSnapshot snapshot, SavedAccount account, AlertState alerts, UsageForecast sessionForecast)
+    {
+        var accountKey = account.Key;
+        string AlertText(string text) => MultipleAccounts ? $"{account.DisplayName ?? Strings.AccountUnnamed}: {text}" : text;
+
         if (snapshot.SessionPercent >= WarnThresholdPercent && !alerts.SessionWarningShown)
         {
             _notifier.ShowUsageAlert(UsageAlert.Session,
-                AlertText(Strings.NotificationSessionWarning(snapshot.SessionPercent, snapshot.SessionResetsAt)), snapshot.SessionResetsAt);
+                AlertText(Strings.NotificationSessionWarning(snapshot.SessionPercent, snapshot.SessionResetsAt)), snapshot.SessionResetsAt,
+                accountKey: accountKey);
             alerts.SessionWarningShown = true;
         }
         else if (snapshot.SessionPercent < WarnThresholdPercent)
@@ -1455,7 +1532,8 @@ public sealed class UsageTrayContext : ApplicationContext
         if (snapshot.WeeklyPercent >= WarnThresholdPercent && !alerts.WeeklyWarningShown)
         {
             _notifier.ShowUsageAlert(UsageAlert.Weekly,
-                AlertText(Strings.NotificationWeeklyWarning(snapshot.WeeklyPercent, snapshot.WeeklyResetsAt)), snapshot.WeeklyResetsAt);
+                AlertText(Strings.NotificationWeeklyWarning(snapshot.WeeklyPercent, snapshot.WeeklyResetsAt)), snapshot.WeeklyResetsAt,
+                accountKey: accountKey);
             alerts.WeeklyWarningShown = true;
         }
         else if (snapshot.WeeklyPercent < WarnThresholdPercent)
@@ -1472,7 +1550,7 @@ public sealed class UsageTrayContext : ApplicationContext
             if (limit.RoundedPercent >= WarnThresholdPercent)
             {
                 if (alerts.LimitWarningsShown.Add(limit.Key))
-                    _notifier.ShowUsageAlert(UsageAlert.AdditionalLimit, AlertText(Strings.NotificationLimitWarning(limit)), limit.ResetsAt, limit.Key);
+                    _notifier.ShowUsageAlert(UsageAlert.AdditionalLimit, AlertText(Strings.NotificationLimitWarning(limit)), limit.ResetsAt, limit.Key, accountKey);
             }
             else
             {
@@ -1480,25 +1558,22 @@ public sealed class UsageTrayContext : ApplicationContext
             }
         }
 
-        if (_sessionForecast.LimitIn is { } limitIn && limitIn <= ForecastWarnWithin)
+        if (sessionForecast.LimitIn is { } limitIn && limitIn <= ForecastWarnWithin)
         {
             if (!alerts.SessionForecastWarningShown)
             {
                 _notifier.ShowUsageAlert(UsageAlert.SessionForecast,
-                    AlertText(Strings.NotificationSessionForecast(limitIn)), snapshot.SessionResetsAt);
+                    AlertText(Strings.NotificationSessionForecast(limitIn)), snapshot.SessionResetsAt,
+                    accountKey: accountKey);
                 alerts.SessionForecastWarningShown = true;
             }
         }
-        else if (_sessionForecast.LimitIn is not { } later || later > ForecastRearmAbove)
+        else if (sessionForecast.LimitIn is not { } later || later > ForecastRearmAbove)
         {
             // No forecast any more (idle, reset first, new session) or comfortably far away.
             alerts.SessionForecastWarningShown = false;
         }
     }
-
-    /// <summary>With more than one account, a notification names the account it's about.</summary>
-    private string AlertText(string text) => MultipleAccounts ? $"{ActiveName}: {text}" : text;
-
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];
@@ -1514,6 +1589,7 @@ public sealed class UsageTrayContext : ApplicationContext
             _flyout?.Dispose();
             _miniDashboard?.Dispose();
             _heatmap?.Dispose();
+            DisposeBackgroundMonitoring();
             _notifyIcon.Visible = false;
             _notifyIcon.Icon?.Dispose();
             _notifyIcon.Dispose();

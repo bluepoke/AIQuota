@@ -34,14 +34,16 @@ internal enum NotificationAction
 /// <summary>Shows the app's notifications - as Windows toasts (<see cref="ToastNotifier"/>),
 /// or as tray balloon tips where toasts aren't available (<see cref="BalloonNotifier"/>).
 /// What the user then clicks comes back as a <see cref="NotificationAction"/> on the UI
-/// thread.</summary>
+/// thread, with the account key of the usage notification it was (or null).</summary>
 internal interface INotifier
 {
     /// <param name="expiresAt">When the notification is out of date (the window resets) and
     /// may be removed from the notification center; null keeps it.</param>
     /// <param name="limitKey">For <see cref="UsageAlert.AdditionalLimit"/>: which limit, so
     /// each one replaces only its own previous notification.</param>
-    void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt, string? limitKey = null);
+    /// <param name="accountKey">The account it's about (<see cref="Auth.SavedAccount.Key"/>):
+    /// each account's notifications replace only its own, and a click on one reports it.</param>
+    void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt, string? limitKey = null, string? accountKey = null);
 
     void ShowNewVersion(string version);
 }

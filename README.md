@@ -49,6 +49,8 @@ flyouts. It shows:
 - your account, when the data was last updated, a button that opens the
   [mini dashboard](#mini-dashboard), and a refresh button. With more than one
   [account](#multiple-accounts), a **▾** next to the account's name switches between them
+- at the bottom, the [accounts monitored in the background](#monitoring-accounts-in-the-background)
+  with their session and week bars – click one to switch to it
 - the session, week and (when your plan has them) credit usage as large bars, and the
   reset time as both clock time and countdown (`Resets 14:30 · in 1.6h`). Scale ticks
   divide the session bar into its 5 hours and the week bar into its 7 days (so 20% and
@@ -114,11 +116,16 @@ anywhere, e.g. next to your editor or on a second monitor, showing the bars you 
   - **Layout**: compact or expanded.
   - **Always on top** (on by default), **Opacity** (100% down to 30%) and **Lock
     position**, which stops it from being moved or resized by accident.
-  - **Account** (with more than one [account](#multiple-accounts)): switch accounts.
+  - **Account** (with more than one [account](#multiple-accounts)): switch accounts, and
+    **Show**: the **Active account** only, or **All monitored accounts**.
   - **Refresh now**, **Open flyout** and **Close**.
 
-It always shows the active account; with more than one account, the expanded layout's header
-names it, and each account keeps its own bar selection.
+It shows the active account; with more than one account, the expanded layout's header names
+it, and each account keeps its own bar selection. With **Show → All monitored accounts**, the
+active account and every account [monitored in the background](#monitoring-accounts-in-the-background)
+each get a group of their own – its name, then its bars – in the order of the account list, so
+switching accounts doesn't move them around. In the compact layout with only one bar selected,
+each account is a single row labelled with its name.
 
 It doesn't appear in the taskbar or in Alt+Tab, doesn't take the focus when it opens, and
 follows the light/dark theme, the [accessibility mode](#accessibility) and the display
@@ -141,7 +148,8 @@ them all and switch between them in two clicks, without logging out and in again
 - **Switching**: pick the account in the **Logged in as …** submenu, or – with more than one
   account – with the **▾** next to the account's name in the flyout, or under **Account** in
   the mini dashboard's menu. The new account's last known values show at once and are
-  refreshed right away.
+  refreshed right away (unless they're from the last few minutes, e.g. fetched in the
+  [background](#monitoring-accounts-in-the-background)).
 - **Rename…** gives the active account a short name, e.g. "Work". With more than one account,
   it's shown in the tooltip, the flyout, the mini dashboard and in notifications, so you always
   know which account you're looking at.
@@ -150,11 +158,36 @@ them all and switch between them in two clicks, without logging out and in again
 - If an account's sign-in expires, it stays in the list marked **login required**; selecting
   it (or **Log in again as …**) signs it in again. The other accounts aren't affected.
 
-Only the active account is polled, so the app makes no more requests than with one account.
-Usage history, heatmap, CSV export, forecasts, notifications and the Stream Dock keys always
-belong to the active account. The accounts are listed in `HKCU\Software\AIQuota\Accounts`; their tokens are
-encrypted per account in `%APPDATA%\AIQuota\accounts\`. An existing sign-in from before is
-taken over as the first account.
+Unless you [monitor other accounts in the background](#monitoring-accounts-in-the-background),
+only the active account is polled, so the app makes no more requests than with one account.
+The menu, tooltip, heatmap, CSV export and the Stream Dock keys belong to the active account.
+The accounts are listed in `HKCU\Software\AIQuota\Accounts`; their tokens are encrypted per
+account in `%APPDATA%\AIQuota\accounts\`. An existing sign-in from before is taken over as the
+first account.
+
+#### Monitoring accounts in the background
+
+To keep an eye on another account without switching to it – e.g. whether the work account
+still has room while the private one is at its limit – check it under **Logged in as … →
+Monitor in background** (off by default; the active account is always fetched). Each monitored
+account is then fetched every 5 minutes as well, spread out rather than all at once, and:
+
+- the **flyout** lists it under **Other accounts** at the bottom, with its session and week
+  bars – click it to switch to it,
+- the **mini dashboard** can show it as a group of its own (**Show → All monitored accounts**),
+- its usage is recorded in its own history, so its heatmap and forecasts stay complete,
+- you get its **notifications** too, with its name in front (e.g. "Work: Weekly usage at
+  91%"); clicking one switches to that account.
+
+**Settings → One tray icon per monitored account** (off by default) gives every monitored
+account and the active one a tray icon of its own, with its bars and its name in the tooltip.
+Left-clicking an icon switches to its account and opens the flyout for it. The right-click menu
+is the same on every icon and always acts on the active account. An icon stays with its
+account, so the icons don't swap places when you switch.
+
+A problem with one account – expired sign-in, network error – only shows on that account. If
+the API answers "too many requests" (HTTP 429), the app waits longer before asking for that
+account again (as long as the API says, and doubling each time in a row, up to an hour).
 
 The app gets this data the same way the official `claude` CLI does: by signing you in
 with the same public OAuth client Claude Code uses, then calling the same

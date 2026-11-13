@@ -11,7 +11,7 @@ internal sealed class BalloonNotifier : INotifier
     private const int TimeoutMs = 8000;
 
     private readonly NotifyIcon _notifyIcon;
-    private readonly Action<NotificationAction> _onAction;
+    private readonly Action<NotificationAction, string?> _onAction;
 
     /// <summary><see cref="NotifyIcon"/> has a single <see cref="NotifyIcon.BalloonTipClicked"/>
     /// event for all balloons; this decides what a click does. Windows can also report a
@@ -20,17 +20,22 @@ internal sealed class BalloonNotifier : INotifier
     /// click (the menu entry still offers the update).</summary>
     private bool _lastWasNewVersion;
 
-    public BalloonNotifier(NotifyIcon notifyIcon, Action<NotificationAction> onAction)
+    /// <summary>The account of the most recent usage balloon, for the same reason.</summary>
+    private string? _lastAccountKey;
+
+    public BalloonNotifier(NotifyIcon notifyIcon, Action<NotificationAction, string?> onAction)
     {
         _notifyIcon = notifyIcon;
         _onAction = onAction;
         _notifyIcon.BalloonTipClicked += (_, _) =>
-            _onAction(_lastWasNewVersion ? NotificationAction.Install : NotificationAction.OpenFlyout);
+            _onAction(_lastWasNewVersion ? NotificationAction.Install : NotificationAction.OpenFlyout,
+                _lastWasNewVersion ? null : _lastAccountKey);
     }
 
-    public void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt, string? limitKey = null)
+    public void ShowUsageAlert(UsageAlert alert, string text, DateTimeOffset? expiresAt, string? limitKey = null, string? accountKey = null)
     {
         _lastWasNewVersion = false;
+        _lastAccountKey = accountKey;
         _notifyIcon.ShowBalloonTip(TimeoutMs, Strings.AppTitle, text, ToolTipIcon.Warning);
     }
 

@@ -257,7 +257,7 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
     object State(bool greyscale) => Activator.CreateInstance(stateType,
         true, Account, Strings.StatusUpdated(snapshot.FetchedAt), false, snapshot, 25, false, true,
         new UsageForecast(ForecastKind.Limit, TimeSpan.FromMinutes(38), 100), new UsageForecast(ForecastKind.ResetFirst, ProjectedPercent: 78),
-        (IReadOnlyList<UsageHistoryRecord>)history, greyscale, false, null, false)!;
+        (IReadOnlyList<UsageHistoryRecord>)history, greyscale, false, null, false, null, 0)!;
     Delegate Getter(object state) => Delegate.CreateDelegate(typeof(Func<>).MakeGenericType(stateType), new Holder(state),
         typeof(Holder).GetMethod(nameof(Holder.Get))!.MakeGenericMethod(stateType));
 
