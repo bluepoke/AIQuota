@@ -103,7 +103,7 @@ internal sealed class MiniDashboard : Form
         SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
 
-        _refreshButton = new Button
+        _refreshButton = new IconButton
         {
             Text = "", // Segoe MDL2 Assets "Refresh"
             FlatStyle = FlatStyle.Flat,
@@ -114,7 +114,7 @@ internal sealed class MiniDashboard : Form
         _refreshButton.Click += async (_, _) => await _refresh();
         Controls.Add(_refreshButton);
 
-        _closeButton = new Button
+        _closeButton = new IconButton
         {
             Text = "", // Segoe MDL2 Assets "ChromeClose"
             FlatStyle = FlatStyle.Flat,
@@ -278,6 +278,8 @@ internal sealed class MiniDashboard : Form
                 button.ForeColor = _palette.Text;
                 button.FlatAppearance.MouseOverBackColor = _palette.Hover;
                 button.FlatAppearance.MouseDownBackColor = _palette.Track;
+                // Any border WinForms still draws (BorderSize 0 doesn't cover every state) blends in.
+                button.FlatAppearance.BorderColor = _palette.Background;
             }
             BackColor = _palette.Background;
             AccessibleDescription = DescribeForScreenReaders();
@@ -686,6 +688,14 @@ internal sealed class MiniDashboard : Form
             _closeFont?.Dispose();
         }
         base.Dispose(disposing);
+    }
+
+    /// <summary>Flat icon button that never becomes the window's default button: a flat button
+    /// that is the default draws a rectangle in its text colour despite BorderSize 0, which
+    /// showed up around the close button once the window lost focus.</summary>
+    private sealed class IconButton : Button
+    {
+        public override void NotifyDefault(bool value) => base.NotifyDefault(false);
     }
 
     private static class NativeMethods
