@@ -23,10 +23,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # global.json pins the SDK to 9.0.x - without it, the newest SDK preinstalled on the
+      # runner image (11.0.100 since November 2026) would be used instead.
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          global-json-file: global.json
+
+      # The runner image's user-level NuGet.Config was invalid XML ("Root element is
+      # missing"), which failed every restore. Replace it with a minimal valid one.
+      - name: Reset user NuGet config
+        run: |
+          mkdir -p ~/.nuget/NuGet
+          cat > ~/.nuget/NuGet/NuGet.Config <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+            </packageSources>
+          </configuration>
+          EOF
 
       - name: extract version from tag
         id: version
@@ -83,7 +99,7 @@ jobs:
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          global-json-file: global.json
 
       - name: extract version from tag
         id: version
