@@ -14,7 +14,8 @@ public sealed partial class UsageTrayContext : ApplicationContext
 {
     private enum IconKind { Unavailable, Warning, Usage, Refreshing }
 
-    /// <summary>Where "Open usage page" on a usage notification leads.</summary>
+    /// <summary>Where "Open usage page" on a usage notification and a click on an available
+    /// limit reset (#21) lead.</summary>
     private const string UsagePageUrl = "https://claude.ai/settings/usage";
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMinutes(5);
@@ -91,7 +92,15 @@ public sealed partial class UsageTrayContext : ApplicationContext
         /// <summary>Keys of the additional limits (<see cref="UsageLimitInfo"/>) whose warning
         /// has been shown, until they drop below the threshold again.</summary>
         public readonly HashSet<string> LimitWarningsShown = [];
+
+        /// <summary>The limit reset notifications shown (#21), "available:&lt;grant id&gt;" and
+        /// "expiring:&lt;grant id&gt;" - loaded from and saved to the registry, since unlike a
+        /// threshold an offer stays the same across restarts. Null until first needed.</summary>
+        public HashSet<string>? NotifiedLimitResets;
     }
+
+    /// <summary>Notify once that an unused limit reset ends within this time (#21).</summary>
+    private static readonly TimeSpan LimitResetExpiryWarnWithin = TimeSpan.FromHours(24);
 
     /// <summary>The saved accounts (#13), oldest first, and the one that's shown in the menu,
     /// tooltip, flyout and heatmap. Other accounts are only fetched if they're monitored in
@@ -275,7 +284,8 @@ public sealed partial class UsageTrayContext : ApplicationContext
         _historyMenu.DropDownItems.Add(_historyExportDailyItem);
         _historyMenu.DropDownItems.Add(_historyClearItem);
 
-        var menu = new ContextMenuStrip();
+        // Tooltips: only the limit reset lines (#21) have one.
+        var menu = new ContextMenuStrip { ShowItemToolTips = true };
         menu.Items.Add(_accountMenu);
         menu.Items.Add(_sessionItem);
         menu.Items.Add(_sessionForecastItem);
@@ -861,7 +871,12 @@ public sealed partial class UsageTrayContext : ApplicationContext
     {
         CreateAccountItems = () => CreateAccountItems(withManagement: false),
         SwitchAccount = key => _ = SwitchAccountByKeyAsync(key),
+        OpenUsagePage = OpenUsagePage,
     };
+
+    /// <summary>claude.ai's usage settings in the browser.</summary>
+    private static void OpenUsagePage() =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(UsagePageUrl) { UseShellExecute = true });
 
     /// <summary>Shows the mini dashboard (see <see cref="MiniDashboard"/>) and remembers that
     /// it's open, so it reopens on the next start.</summary>
@@ -899,7 +914,7 @@ public sealed partial class UsageTrayContext : ApplicationContext
         switch (action)
         {
             case NotificationAction.OpenUsagePage:
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(UsagePageUrl) { UseShellExecute = true });
+                OpenUsagePage();
                 break;
             case NotificationAction.Install:
                 OnNewVersionClicked();
@@ -1211,7 +1226,7 @@ public sealed partial class UsageTrayContext : ApplicationContext
         _sessionItem.Text = Strings.MenuSessionEmpty;
         _weeklyItem.Text = Strings.MenuWeeklyEmpty;
         _creditsItem.Visible = false;
-        ApplyLimitMenuItems([]);
+        ApplyLimitMenuItems([], []);
         ResetForecasts();
     }
 
@@ -1284,7 +1299,7 @@ public sealed partial class UsageTrayContext : ApplicationContext
             _creditsItem.Visible = false;
         }
 
-        ApplyLimitMenuItems(snapshot.AdditionalLimits ?? []);
+        ApplyLimitMenuItems(snapshot.AdditionalLimits ?? [], snapshot.LimitResets?.Offers(DateTimeOffset.Now) ?? []);
 
         _statusItem.Text = Strings.StatusUpdated(snapshot.FetchedAt);
 
@@ -1295,8 +1310,10 @@ public sealed partial class UsageTrayContext : ApplicationContext
     /// <summary>One disabled menu line per additional limit (e.g. a model's weekly limit):
     /// limits of the session window right under the session entries, all others under the
     /// week entries, each group sorted by name. Replaces the lines of the previous refresh,
-    /// so a limit that's no longer reported disappears.</summary>
-    private void ApplyLimitMenuItems(IReadOnlyList<UsageLimitInfo> limits)
+    /// so a limit that's no longer reported disappears. Below them, one line per kind of
+    /// available limit reset (#21) - 5-hour resets in the session group, all others in the
+    /// week group; a click on one opens the usage page.</summary>
+    private void ApplyLimitMenuItems(IReadOnlyList<UsageLimitInfo> limits, IReadOnlyList<LimitResetOffer> resetOffers)
     {
         var menu = _notifyIcon.ContextMenuStrip!;
         foreach (var item in _limitItems)
@@ -1306,7 +1323,7 @@ public sealed partial class UsageTrayContext : ApplicationContext
         }
         _limitItems.Clear();
 
-        void InsertAfter(ToolStripItem anchor, IEnumerable<UsageLimitInfo> group)
+        void InsertAfter(ToolStripItem anchor, IEnumerable<UsageLimitInfo> group, IEnumerable<LimitResetOffer> offers)
         {
             var index = menu.Items.IndexOf(anchor);
             foreach (var limit in group.OrderBy(Strings.LimitLabel, StringComparer.CurrentCultureIgnoreCase))
@@ -1315,10 +1332,17 @@ public sealed partial class UsageTrayContext : ApplicationContext
                 menu.Items.Insert(++index, item);
                 _limitItems.Add(item);
             }
+            foreach (var offer in offers)
+            {
+                var item = new ToolStripMenuItem(Strings.LimitResetMenuLabel(offer)) { ToolTipText = Strings.LimitResetMenuToolTip };
+                item.Click += (_, _) => OpenUsagePage();
+                menu.Items.Insert(++index, item);
+                _limitItems.Add(item);
+            }
         }
 
-        InsertAfter(_sessionForecastItem, limits.Where(l => l.IsSessionGroup));
-        InsertAfter(_weeklyForecastItem, limits.Where(l => !l.IsSessionGroup));
+        InsertAfter(_sessionForecastItem, limits.Where(l => l.IsSessionGroup), resetOffers.Where(o => o.IsSessionKind));
+        InsertAfter(_weeklyForecastItem, limits.Where(l => !l.IsSessionGroup), resetOffers.Where(o => !o.IsSessionKind));
     }
 
     /// <summary>Recomputes the session and week burn-rate forecasts from the history (which
@@ -1573,6 +1597,54 @@ public sealed partial class UsageTrayContext : ApplicationContext
             // No forecast any more (idle, reset first, new session) or comfortably far away.
             alerts.SessionForecastWarningShown = false;
         }
+
+        if (snapshot.LimitResets is { } resets)
+            MaybeNotifyLimitResets(resets, accountKey, alerts, AlertText);
+    }
+
+    /// <summary>Limit resets (#21): one notification when grants with resets appear (listing
+    /// all available resets), and one per grant when its unused resets end within <see
+    /// cref="LimitResetExpiryWarnWithin"/>. Each is shown once per grant, also across
+    /// restarts. A grant that first shows up already close to its end only gets the first
+    /// one - it says when the resets end.</summary>
+    private void MaybeNotifyLimitResets(LimitResetStatus resets, string accountKey, AlertState alerts, Func<string, string> alertText)
+    {
+        var now = DateTimeOffset.Now;
+        var notified = alerts.NotifiedLimitResets ??= AccountStore.LoadNotifiedLimitResets(accountKey);
+        var changed = false;
+
+        // Forget grants the response no longer lists, so the stored set doesn't grow forever.
+        var known = resets.Grants.Select(g => g.Id).ToHashSet();
+        changed |= notified.RemoveWhere(entry => !known.Contains(entry[(entry.IndexOf(':') + 1)..])) > 0;
+
+        var available = resets.AvailableGrants(now).ToList();
+        var fresh = available.Where(g => !notified.Contains("available:" + g.Id)).ToList();
+        if (fresh.Count > 0)
+        {
+            var offers = resets.Offers(now);
+            _notifier.ShowUsageAlert(UsageAlert.LimitResetAvailable, alertText(Strings.NotificationLimitResetAvailable(offers, now)),
+                offers.Where(o => o.FirstEndsAt is not null).Min(o => o.FirstEndsAt), accountKey: accountKey);
+            foreach (var grant in fresh)
+            {
+                notified.Add("available:" + grant.Id);
+                if (grant.EndsAt is { } end && end - now <= LimitResetExpiryWarnWithin)
+                    notified.Add("expiring:" + grant.Id);
+            }
+            changed = true;
+        }
+
+        foreach (var grant in available)
+        {
+            if (grant.EndsAt is { } end && end - now <= LimitResetExpiryWarnWithin && notified.Add("expiring:" + grant.Id))
+            {
+                _notifier.ShowUsageAlert(UsageAlert.LimitResetExpiring, alertText(Strings.NotificationLimitResetExpiring(grant, now)), end,
+                    accountKey: accountKey);
+                changed = true;
+            }
+        }
+
+        if (changed)
+            AccountStore.SaveNotifiedLimitResets(accountKey, notified);
     }
 
     private static string Truncate(string value, int maxLength) =>

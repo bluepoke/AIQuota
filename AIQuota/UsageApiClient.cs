@@ -35,7 +35,10 @@ public sealed record UsageApiResponse(
     // Kept as raw JSON and read tolerantly by UsageLimitParser, so a change in their shape
     // can't fail the whole fetch.
     [property: JsonPropertyName("limits")] JsonElement? Limits = null,
-    [property: JsonPropertyName("weekly_scoped_shares")] JsonElement? WeeklyScopedShares = null);
+    [property: JsonPropertyName("weekly_scoped_shares")] JsonElement? WeeklyScopedShares = null,
+    // Limit resets (#21), only present when asked for with ?cedar_ember=1; read tolerantly by
+    // LimitResetParser.
+    [property: JsonPropertyName("cedar_ember")] JsonElement? LimitResets = null);
 
 public sealed record UsageSnapshot(
     int SessionPercent,
@@ -48,7 +51,9 @@ public sealed record UsageSnapshot(
     string? CreditCurrency = null,
     double? SessionUtilization = null,
     double? WeeklyUtilization = null,
-    IReadOnlyList<UsageLimitInfo>? AdditionalLimits = null);
+    IReadOnlyList<UsageLimitInfo>? AdditionalLimits = null,
+    // Null when the response had no (readable) limit reset status.
+    LimitResetStatus? LimitResets = null);
 
 /// <summary>The signed-in account, from the profile endpoint.</summary>
 /// <param name="Id">Stable identifier (the account UUID, else the email) - keys the local
@@ -86,8 +91,12 @@ public sealed class UsageApiClient(OAuthClient oauth)
             if (accessToken is null)
                 return new UsageFetchResult(UsageFetchStatus.NotLoggedIn, null);
 
+            // Claude Code's User-Agent with its current version: the endpoint reports limit
+            // resets (#21) only to Claude Code (see ClaudeCodeVersion).
+            await ClaudeCodeVersion.EnsureFreshAsync(cancellationToken);
             using var request = new HttpRequestMessage(HttpMethod.Get, OAuthConfig.UsageUrl);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            request.Headers.TryAddWithoutValidation("User-Agent", ClaudeCodeVersion.UserAgent);
 
             using var response = await _http.SendAsync(request, cancellationToken);
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
@@ -123,7 +132,8 @@ public sealed class UsageApiClient(OAuthClient oauth)
                 spend?.used.Currency,
                 data.FiveHour is { } fiveHour ? Math.Clamp(fiveHour.Utilization, 0, 100) : null,
                 data.SevenDay is { } sevenDay ? Math.Clamp(sevenDay.Utilization, 0, 100) : null,
-                UsageLimitParser.ParseAdditional(data.Limits, data.WeeklyScopedShares));
+                UsageLimitParser.ParseAdditional(data.Limits, data.WeeklyScopedShares),
+                LimitResetParser.Parse(data.LimitResets));
 
             return new UsageFetchResult(UsageFetchStatus.Ok, snapshot);
         }

@@ -109,6 +109,22 @@ public static class AccountStore
         key.SetValue("MonitorInBackground", account.MonitorInBackground ? 1 : 0, RegistryValueKind.DWord);
     }
 
+    /// <summary>The limit reset notifications (#21) already shown for an account, e.g.
+    /// "available:&lt;grant id&gt;" - kept across restarts so an offer isn't announced again
+    /// on every start.</summary>
+    public static HashSet<string> LoadNotifiedLimitResets(string accountKey)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey($@"{KeyPath}\{accountKey}", writable: false);
+        return key?.GetValue("NotifiedLimitResets") is string[] values ? [.. values] : [];
+    }
+
+    public static void SaveNotifiedLimitResets(string accountKey, IEnumerable<string> notified)
+    {
+        // Only for an account that's still saved: CreateSubKey would bring a removed one back.
+        using var key = Registry.CurrentUser.OpenSubKey($@"{KeyPath}\{accountKey}", writable: true);
+        key?.SetValue("NotifiedLimitResets", notified.Order(StringComparer.Ordinal).ToArray(), RegistryValueKind.MultiString);
+    }
+
     /// <summary>One tray icon per monitored account instead of a single one (#18); off by
     /// default.</summary>
     public static bool LoadIconPerAccount()

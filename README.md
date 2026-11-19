@@ -34,7 +34,7 @@ the time remaining until each window resets (e.g. `Session (5h): 37% (1.5h)`,
 Right-click for the full menu: signed-in account (with [switching between
 accounts](#multiple-accounts)), exact percentages with reset day/time,
 a burn-rate forecast, [additional limits](#additional-limits) such as a model's weekly
-limit, usage credit balance (used/limit, when available), manual refresh, the
+limit, available [limit resets](#limit-resets), usage credit balance (used/limit, when available), manual refresh, the
 [mini dashboard](#mini-dashboard), login, the usage history ([yearly heatmap](#yearly-heatmap), export, clear), run-at-startup toggle, a session countdown ring
 toggle, a weekly pace marker toggle, an accessibility mode toggle, a Stream Dock controller toggle, a
 check-for-new-version toggle, and a language switch (German/English):
@@ -175,9 +175,18 @@ account is then fetched every 5 minutes as well, spread out rather than all at o
 - the **flyout** lists it under **Other accounts** at the bottom, with its session and week
   bars – click it to switch to it,
 - the **mini dashboard** can show it as a group of its own (**Show → All monitored accounts**),
+  or – with only one bar selected – as one row per account,
 - its usage is recorded in its own history, so its heatmap and forecasts stay complete,
 - you get its **notifications** too, with its name in front (e.g. "Work: Weekly usage at
   91%"); clicking one switches to that account.
+
+<p>
+  <img src="screenshots/accounts_dark.png" width="690" alt="Several accounts, dark theme: the flyout of the active account Private with the account button and, at the bottom, the other accounts Work (session and week bars) and Side project (login required); next to it the mini dashboard showing all monitored accounts, once as a group per account with session and week, once as one row per account with only the week">
+  <img src="screenshots/accounts_light.png" width="690" alt="The same flyout and mini dashboards in the light theme">
+</p>
+
+An account whose sign-in has expired stays listed with **Login required** – clicking it in the
+flyout signs it in again.
 
 **Settings → One tray icon per monitored account** (off by default) gives every monitored
 account and the active one a tray icon of its own, with its bars and its name in the tooltip.
@@ -209,6 +218,8 @@ Usage warnings and the new-version notice are Windows notifications with buttons
 | Week at 90% or more | `Weekly usage at 90% · resets Mon 09:00` | **Open usage page**, **Dismiss** |
 | [Additional limit](#additional-limits) at 90% or more | `Week · Opus at 91% · resets Mon 09:00` | **Open usage page**, **Dismiss** |
 | Session limit forecast | `Session limit (5h) in ~25min at current rate` | **Open usage page**, **Dismiss** |
+| [Limit reset](#limit-resets) available | `Limit reset available: 1 weekly reset · use by Sun 18:00. Use it in Claude Code with /limit-reset.` | **Open usage page**, **Dismiss** |
+| Unused limit reset ends within 24 hours | `Unused weekly reset ends Sun 18:00 (1 left). Use it in Claude Code with /limit-reset.` | **Open usage page**, **Dismiss** |
 | New version | `AI Quota v1.5.0 is available` | **Install…**, **Later** |
 
 - **Open usage page** opens [claude.ai/settings/usage](https://claude.ai/settings/usage) in
@@ -307,6 +318,28 @@ without a fixed list of which ones exist, so new limits appear without an app up
 The tray icon and the tooltip keep showing the session and the overall week only. Names
 come from the API: known windows are translated (`Week`, `Session (5h)`), and what a limit
 is scoped to (e.g. the model name) is shown as reported.
+
+### Limit resets
+
+Anthropic sometimes offers accounts **limit resets**: they refill a limit before its regular
+reset. When your account has one, AI Quota shows it – the same offer Claude Code's
+`/limit-reset` command lists:
+
+- **Flyout and mini dashboard**: a line under the bar the reset refills, e.g.
+  `↺ 1 weekly reset available · use by Sun 18:00 (in 3d4h)`: 5-hour resets under the
+  session bar, weekly, full and Fable resets under the week bar. Clicking the line in the
+  flyout opens the usage page. Other accounts in the flyout show `↺ 1` after their name.
+- **Right-click menu**: the same line under the session or week entry.
+- **Notifications**: one when a reset becomes available, and one when an unused reset ends
+  within 24 hours – each only once per offer, also after a restart.
+
+Nothing is shown while there's no offer. AI Quota only shows resets – use them in Claude
+Code with `/limit-reset`.
+
+<p>
+  <img src="screenshots/limit_resets_dark.png" width="372" alt="Tray flyout, dark theme: under the week bar the line '1 weekly reset available · use by Sun 18:12 (in 3d4h)', and the other account Work with the marker '↺ 1' after its name">
+  <img src="screenshots/limit_resets_light.png" width="372" alt="The same flyout in the light theme">
+</p>
 
 ### Usage history and forecast
 
@@ -567,6 +600,10 @@ The only thing still worth doing manually: replace the placeholder icons in
   `%APPDATA%\AIQuota\`, and nowhere else.
 - The app never reads Claude Desktop's or Claude Code's stored credentials — every
   login is a fresh, explicit sign-in you approve in your browser.
+- The usage request carries Claude Code's User-Agent (`claude-cli/<version>`), because the
+  usage endpoint only reports [limit resets](#limit-resets) to Claude Code. The current
+  version is read at most every 6 hours from Claude Code's public release channel
+  (`downloads.claude.ai`, else the npm registry); these requests carry no account data.
 
 ## About this project
 

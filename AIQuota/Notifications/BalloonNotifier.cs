@@ -36,7 +36,8 @@ internal sealed class BalloonNotifier : INotifier
     {
         _lastWasNewVersion = false;
         _lastAccountKey = accountKey;
-        _notifyIcon.ShowBalloonTip(TimeoutMs, Strings.AppTitle, text, ToolTipIcon.Warning);
+        var icon = alert == UsageAlert.LimitResetAvailable ? ToolTipIcon.Info : ToolTipIcon.Warning;
+        _notifyIcon.ShowBalloonTip(TimeoutMs, Strings.AppTitle, text, icon);
     }
 
     public void ShowNewVersion(string version)

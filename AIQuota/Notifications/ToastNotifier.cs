@@ -75,6 +75,8 @@ internal sealed class ToastNotifier : INotifier
             UsageAlert.Session => "session",
             UsageAlert.Weekly => "weekly",
             UsageAlert.AdditionalLimit => "limit-" + limitKey,
+            UsageAlert.LimitResetAvailable => "reset-available",
+            UsageAlert.LimitResetExpiring => "reset-expiring",
             _ => "forecast",
         };
         // Each account has its own notification per kind (#18).

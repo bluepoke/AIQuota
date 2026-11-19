@@ -3,7 +3,9 @@
 //     dotnet run --project tools/Screenshots [output directory]
 //
 // Writes tray_icon_states.png, context_menu.png, flyout_dark.png, flyout_light.png,
-// mini_dashboard_dark/light.png and heatmap_dark/light.png to the
+// mini_dashboard_dark/light.png, accounts_dark/light.png (several accounts: flyout and mini
+// dashboard), limit_resets_dark/light.png (flyout with available limit resets) and
+// heatmap_dark/light.png to the
 // repository's screenshots/ folder (or the given directory), and the same tray icons,
 // flyouts and heatmap in accessibility mode (accessibility_*.png), plus its Stream Dock keys.
 //
@@ -270,9 +272,12 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
         type.GetField("_scale", PrivInst)!.SetValue(form, 2f);
         type.GetMethod("ApplyLayout", PrivInst)!.Invoke(form, null);
 
+        // OnPaint straight into the bitmap rather than DrawToBitmap: Windows limits a window to
+        // about the screen's height, and DrawToBitmap would cut off a flyout taller than that.
         var bmp = new Bitmap(form.ClientSize.Width, form.ClientSize.Height);
-        form.DrawToBitmap(bmp, new Rectangle(Point.Empty, form.ClientSize));
         using var g = Graphics.FromImage(bmp);
+        using (var paint = new PaintEventArgs(g, new Rectangle(Point.Empty, form.ClientSize)))
+            typeof(Control).GetMethod("OnPaint", PrivInst)!.Invoke(form, [paint]);
         foreach (var button in buttonFields.Select(f => (Button)type.GetField(f, PrivInst)!.GetValue(form)!))
         {
             using var buttonBmp = new Bitmap(button.Width, button.Height);
@@ -327,6 +332,98 @@ double WeeklyPacePercent() => (1 - (weeklyReset - now) / TimeSpan.FromDays(7)) *
             }
         }
         sheet.Save(Path.Combine(outDir, light ? "mini_dashboard_light.png" : "mini_dashboard_dark.png"), ImageFormat.Png);
+    }
+
+    // Multiple accounts (#13, #18): the flyout of the active account "Private" with the
+    // account button and two accounts monitored in the background ("Work", and "Side project"
+    // whose sign-in has expired), next to the mini dashboard showing all monitored accounts -
+    // as groups with session and week, and as one row per account with only the week.
+    var workSnapshot = new UsageSnapshot(18, 64, now + TimeSpan.FromHours(4.2), now + TimeSpan.FromDays(1.8), now - TimeSpan.FromMinutes(3),
+        SessionUtilization: 18.4, WeeklyUtilization: 63.7);
+    object AccountState(bool loggedIn, string name, string status, UsageSnapshot? accountSnapshot, IReadOnlyList<UsageHistoryRecord> accountHistory,
+        UsageForecast session, UsageForecast week, string key, int order, Array? others) =>
+        Activator.CreateInstance(stateType,
+            loggedIn, name, status, false, accountSnapshot, accountSnapshot == snapshot ? 25 : null, false, true,
+            session, week, accountHistory, false, false, key, true, others, order)!;
+    var otherAccounts = Array.CreateInstance(stateType, 2);
+    otherAccounts.SetValue(AccountState(true, "Work", Strings.StatusUpdated(workSnapshot.FetchedAt), workSnapshot, [],
+        UsageForecast.None, new UsageForecast(ForecastKind.Limit, TimeSpan.FromHours(30), 100), "work", 1, null), 0);
+    otherAccounts.SetValue(AccountState(false, "Side project", Strings.StatusPleaseReauth, null, [],
+        UsageForecast.None, UsageForecast.None, "side", 2, null), 1);
+    var activeState = AccountState(true, "Private", Strings.StatusUpdated(snapshot.FetchedAt), snapshot, history,
+        new UsageForecast(ForecastKind.Limit, TimeSpan.FromMinutes(38), 100), new UsageForecast(ForecastKind.ResetFirst, ProjectedPercent: 78),
+        "private", 0, otherAccounts);
+    Func<IReadOnlyList<ToolStripItem>> noItems = () => [];
+
+    foreach (var light in new[] { false, true })
+    {
+        var flyout = (Form)Activator.CreateInstance(flyoutType, Getter(activeState), (Func<Task>)(() => Task.CompletedTask), (Action)(() => { }), (Action)(() => { }))!;
+        // Init-only properties: without them, the ▾ button and the clickable rows are off.
+        flyoutType.GetProperty("CreateAccountItems")!.SetValue(flyout, noItems);
+        flyoutType.GetProperty("SwitchAccount")!.SetValue(flyout, (Action<string>)(_ => { }));
+        using var flyoutBmp = Render(flyout, flyoutType, light, greyscale: false, "_refreshButton", "_miniDashboardButton", "_heatmapButton", "_accountButton");
+        flyout.Dispose();
+        var frames = new List<Bitmap> { Frame(flyoutBmp, radius: 16, light: light) };
+
+        foreach (var bars in new[] { new List<string> { "session", "week" }, ["week"] })
+        {
+            var settings = Activator.CreateInstance(settingsType)!;
+            settingsType.GetProperty("LogicalWidth")!.SetValue(settings, 300);
+            settingsType.GetProperty("Bars")!.SetValue(settings, bars);
+            settingsType.GetProperty("ShowAllAccounts")!.SetValue(settings, true);
+            var dashboard = (Form)Activator.CreateInstance(dashboardType, Getter(activeState), (Func<Task>)(() => Task.CompletedTask),
+                (Action)(() => { }), (Action)(() => { }), settings, saveNothing)!;
+            using var bmp = Render(dashboard, dashboardType, light, greyscale: false, "_closeButton");
+            dashboard.Dispose();
+            frames.Add(Frame(bmp, radius: 16, light: light));
+        }
+
+        // Flyout on the left, the two mini dashboards stacked on its right, top-aligned.
+        var right = frames.Skip(1).ToList();
+        using var sheet = new Bitmap(frames[0].Width + right.Max(f => f.Width), Math.Max(frames[0].Height, right.Sum(f => f.Height)));
+        using (var g = Graphics.FromImage(sheet))
+        {
+            g.DrawImage(frames[0], 0, 0);
+            var y = 0;
+            foreach (var frame in right)
+            {
+                g.DrawImage(frame, frames[0].Width, y);
+                y += frame.Height;
+            }
+        }
+        foreach (var frame in frames)
+            frame.Dispose();
+        sheet.Save(Path.Combine(outDir, light ? "accounts_light.png" : "accounts_dark.png"), ImageFormat.Png);
+    }
+
+    // Limit resets (#21): the active account holds one of two weekly resets, ending in a few
+    // days; the monitored "Work" account has a 5-hour reset (the marker after its name).
+    var resetSnapshot = snapshot with
+    {
+        LimitResets = new LimitResetStatus(true,
+            [new LimitResetGrant("grant-weekly", LimitResetKind.Weekly, 1, 2, now - TimeSpan.FromDays(4), now + TimeSpan.FromDays(3.2), false, true)]),
+    };
+    var workResetSnapshot = workSnapshot with
+    {
+        LimitResets = new LimitResetStatus(true,
+            [new LimitResetGrant("grant-session", LimitResetKind.Session, 1, 1, null, now + TimeSpan.FromDays(6), false, true)]),
+    };
+    var resetOthers = Array.CreateInstance(stateType, 1);
+    resetOthers.SetValue(AccountState(true, "Work", Strings.StatusUpdated(workSnapshot.FetchedAt), workResetSnapshot, [],
+        UsageForecast.None, new UsageForecast(ForecastKind.Limit, TimeSpan.FromHours(30), 100), "work", 1, null), 0);
+    var resetState = Activator.CreateInstance(stateType,
+        true, "Private", Strings.StatusUpdated(snapshot.FetchedAt), false, resetSnapshot, 25, false, true,
+        new UsageForecast(ForecastKind.Limit, TimeSpan.FromMinutes(38), 100), new UsageForecast(ForecastKind.ResetFirst, ProjectedPercent: 78),
+        (IReadOnlyList<UsageHistoryRecord>)history, false, false, "private", true, resetOthers, 0)!;
+    foreach (var light in new[] { false, true })
+    {
+        var flyout = (Form)Activator.CreateInstance(flyoutType, Getter(resetState), (Func<Task>)(() => Task.CompletedTask), (Action)(() => { }), (Action)(() => { }))!;
+        flyoutType.GetProperty("CreateAccountItems")!.SetValue(flyout, noItems);
+        flyoutType.GetProperty("SwitchAccount")!.SetValue(flyout, (Action<string>)(_ => { }));
+        using var bmp = Render(flyout, flyoutType, light, greyscale: false, "_refreshButton", "_miniDashboardButton", "_heatmapButton", "_accountButton");
+        flyout.Dispose();
+        using var framed = Frame(bmp, radius: 16, light: light);
+        framed.Save(Path.Combine(outDir, light ? "limit_resets_light.png" : "limit_resets_dark.png"), ImageFormat.Png);
     }
 }
 

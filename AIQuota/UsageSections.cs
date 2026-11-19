@@ -4,8 +4,10 @@ using AIQuota.Localization;
 namespace AIQuota;
 
 /// <summary>A line of text under a usage bar; <paramref name="Emphasized"/> lines (a limit
-/// forecast) use the primary text colour instead of the secondary one.</summary>
-internal readonly record struct SectionLine(string Text, bool Emphasized = false);
+/// forecast) use the primary text colour instead of the secondary one. <paramref
+/// name="OpensUsagePage"/>: an available limit reset (#21) - the flyout opens the usage page
+/// on a click on it.</summary>
+internal readonly record struct SectionLine(string Text, bool Emphasized = false, bool OpensUsagePage = false);
 
 /// <summary>One usage bar with everything shown around it - what the tray flyout and the
 /// mini dashboard draw for the session, the week, each additional limit and the credits.</summary>
@@ -44,6 +46,9 @@ internal static class UsageSections
         var limits = (snapshot.AdditionalLimits ?? [])
             .OrderBy(Strings.LimitLabel, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
+        // Available limit resets (#21): 5-hour resets under the session, all others under the
+        // week. Filtered by `now`, so an offer that has ended disappears before the next fetch.
+        var resetOffers = snapshot.LimitResets?.Offers(now) ?? [];
 
         // Session - with a pace marker like the week's (the same setting turns both on/off),
         // here for an even spread over the 5 hours. None before a session starts: there's no
@@ -59,6 +64,7 @@ internal static class UsageSections
                     + (state.ShowPaceMarker && sessionPace is { } sp ? Strings.PaceSuffix((int)Math.Round(sp * 100)) : "")),
         };
         AddForecast(sessionDetails, state.SessionForecast);
+        AddResetOffers(sessionDetails, resetOffers.Where(o => o.IsSessionKind), now);
         sections.Add(new UsageSection(SessionKey, Strings.FlyoutSessionTitle, snapshot.SessionPercent, state.SessionNotStarted,
             state.ShowPaceMarker ? sessionPace : null, state.SessionForecast.ProjectedPercent, UsageWindows.SessionHours, sessionDetails));
 
@@ -73,6 +79,7 @@ internal static class UsageSections
                 + (state.ShowPaceMarker && weekPace is { } p ? Strings.PaceSuffix((int)Math.Round(p * 100)) : "")));
         }
         AddForecast(weekDetails, state.WeeklyForecast);
+        AddResetOffers(weekDetails, resetOffers.Where(o => !o.IsSessionKind), now);
         sections.Add(new UsageSection(WeekKey, Strings.FlyoutWeekTitle, snapshot.WeeklyPercent, OutlineOnly: false,
             state.ShowPaceMarker ? weekPace : null, state.WeeklyForecast.ProjectedPercent, UsageWindows.WeekDays, weekDetails));
 
@@ -116,6 +123,19 @@ internal static class UsageSections
                 break;
         }
     }
+
+    /// <summary>One line per kind of available limit reset (#21), e.g. "↺ 1 weekly reset
+    /// available · use by Sun 23:59 (in 3d4h)".</summary>
+    private static void AddResetOffers(List<SectionLine> lines, IEnumerable<LimitResetOffer> offers, DateTimeOffset now)
+    {
+        foreach (var offer in offers)
+            lines.Add(new(Strings.LimitResetLine(offer, now), Emphasized: true, OpensUsagePage: true));
+    }
+
+    /// <summary>The number of available limit resets of an account (#21), for the marker next
+    /// to another account's name in the flyout; 0 without any.</summary>
+    public static int AvailableResetCount(FlyoutState state, DateTimeOffset now) =>
+        state.Snapshot?.LimitResets?.Offers(now).Sum(o => o.Count) ?? 0;
 
     /// <summary>Scale sections of a bar: one per hour of the session window, one per day of
     /// the weekly window (both from <see cref="UsageWindows"/>, so they follow if a window's

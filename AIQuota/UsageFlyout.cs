@@ -124,6 +124,14 @@ internal sealed class UsageFlyout : Form
     private List<(RectangleF Bounds, string Key)> _otherAccountRows = [];
     private int? _hoverAccountRow;
 
+    /// <summary>Opens claude.ai's usage page - a click on an available limit reset (#21).</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public Action? OpenUsagePage { get; init; }
+
+    /// <summary>The limit reset lines from the last layout, for hit-testing.</summary>
+    private List<RectangleF> _usagePageLinks = [];
+    private bool _hoverUsagePageLink;
+
     /// <param name="openMiniDashboard">Opens the mini dashboard (header button next to refresh).</param>
     /// <param name="openHeatmap">Opens the yearly heatmap (button next to the chart's title).</param>
     public UsageFlyout(Func<FlyoutState> getState, Func<Task> refresh, Action openMiniDashboard, Action openHeatmap)
@@ -293,6 +301,7 @@ internal sealed class UsageFlyout : Form
         _clockTimer.Stop();
         _hoverIndex = null;
         _hoverAccountRow = null;
+        _hoverUsagePageLink = false;
     }
 
     protected override CreateParams CreateParams
@@ -596,6 +605,7 @@ internal sealed class UsageFlyout : Form
         y += S(1f) + S(12f);
 
         _historyTitle = RectangleF.Empty;
+        _usagePageLinks = [];
         // The y below the content (the padding still to be added), and where the other accounts
         // would start - null if there's no content below the header (logged in, but nothing
         // fetched yet: the first refresh is running, or it failed - the header's status line
@@ -615,6 +625,7 @@ internal sealed class UsageFlyout : Form
             var bars = Bars;
             foreach (var section in UsageSections.Build(_state, now))
                 y = bars.DrawSection(g, section, _bodyFont, _titleFont, _bodyFont, left, y, width) + S(14f);
+            _usagePageLinks = bars.UsagePageLinks;
 
             // 7-day chart
             _historyTitle = new RectangleF(left, y, width / 2f, S(20f));
@@ -676,10 +687,15 @@ internal sealed class UsageFlyout : Form
                 g.FillPath(hover, path);
             }
 
-            // Name on the left, status (or "refreshing") on the right.
-            var status = other.IsRefreshing ? Strings.FlyoutRefreshing : other.StatusText;
+            // Name on the left, status (or "refreshing") on the right - none while it needs a
+            // new login, the line below says so.
+            var status = !other.LoggedIn ? "" : other.IsRefreshing ? Strings.FlyoutRefreshing : other.StatusText;
             var statusWidth = Math.Min(TextRenderer.MeasureText(status, _smallFont).Width + S(2f), width * 0.55f);
-            DrawText(g, other.AccountLabel ?? Strings.AccountUnnamed, _bodyFont, _palette.Text, new RectangleF(left, y, width - statusWidth - S(8f), S(20f)));
+            // With available limit resets (#21), a marker with their number after the name.
+            var name = other.AccountLabel ?? Strings.AccountUnnamed;
+            if (UsageSections.AvailableResetCount(other, now) is > 0 and var resets)
+                name += "  " + Strings.LimitResetMarker(resets);
+            DrawText(g, name, _bodyFont, _palette.Text, new RectangleF(left, y, width - statusWidth - S(8f), S(20f)));
             DrawText(g, status, _smallFont, other.HasError ? _palette.Text : _palette.Secondary,
                 new RectangleF(left + width - statusWidth, y + S(1f), statusWidth, S(18f)), TextFormatFlags.Right);
             var rowsTop = y + S(20f);
@@ -691,7 +707,8 @@ internal sealed class UsageFlyout : Form
             }
             else
             {
-                var reason = other.LoggedIn ? other.StatusText : Strings.MenuNotLoggedIn;
+                // A click switches to it, which starts the login.
+                var reason = other.LoggedIn ? other.StatusText : Strings.FlyoutClickToLogInAgain;
                 DrawText(g, reason, _smallFont, _palette.Secondary, new RectangleF(left, rowsTop, width, S(18f)));
             }
             y += height + S(14f);
@@ -702,9 +719,20 @@ internal sealed class UsageFlyout : Form
     protected override void OnMouseClick(MouseEventArgs e)
     {
         base.OnMouseClick(e);
-        if (e.Button == MouseButtons.Left && AccountRowAt(e.Location) is { } row && SwitchAccount is { } switchAccount)
+        if (e.Button != MouseButtons.Left)
+            return;
+        if (UsagePageLinkAt(e.Location) && OpenUsagePage is { } openUsagePage)
+        {
+            HideFlyout();
+            openUsagePage();
+        }
+        else if (AccountRowAt(e.Location) is { } row && SwitchAccount is { } switchAccount)
+        {
             switchAccount(_otherAccountRows[row].Key);
+        }
     }
+
+    private bool UsagePageLinkAt(Point location) => _usagePageLinks.Any(r => r.Contains(location));
 
     private int? AccountRowAt(Point location)
     {
@@ -922,10 +950,13 @@ internal sealed class UsageFlyout : Form
 
         // Another account's summary row: highlighted and clickable (#18).
         var accountRow = SwitchAccount is null ? null : AccountRowAt(e.Location);
-        if (accountRow != _hoverAccountRow)
+        // An available limit reset (#21): clickable, opens the usage page.
+        var usagePageLink = OpenUsagePage is not null && UsagePageLinkAt(e.Location);
+        if (accountRow != _hoverAccountRow || usagePageLink != _hoverUsagePageLink)
         {
             _hoverAccountRow = accountRow;
-            Cursor = accountRow is null ? Cursors.Default : Cursors.Hand;
+            _hoverUsagePageLink = usagePageLink;
+            Cursor = accountRow is null && !usagePageLink ? Cursors.Default : Cursors.Hand;
             Invalidate();
         }
     }
@@ -933,10 +964,11 @@ internal sealed class UsageFlyout : Form
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
-        if (_hoverIndex is not null || _hoverAccountRow is not null)
+        if (_hoverIndex is not null || _hoverAccountRow is not null || _hoverUsagePageLink)
         {
             _hoverIndex = null;
             _hoverAccountRow = null;
+            _hoverUsagePageLink = false;
             Cursor = Cursors.Default;
             Invalidate();
         }

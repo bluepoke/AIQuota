@@ -365,10 +365,11 @@ internal sealed class MiniDashboard : Form
             ? [.. _state.Others.Append(_state).OrderBy(a => a.AccountOrder)]
             : [_state];
 
+    /// <summary>Status of an account in a group: "Please log in again" for a saved account
+    /// whose sign-in expired (its status text says so), "Refreshing…", or the last update or
+    /// error.</summary>
     private static string StatusOf(FlyoutState state) =>
-        !state.LoggedIn ? Strings.MenuNotLoggedIn
-        : state.IsRefreshing ? Strings.FlyoutRefreshing
-        : state.StatusText;
+        state.IsRefreshing && state.LoggedIn ? Strings.FlyoutRefreshing : state.StatusText;
 
     private string StatusText => _state.IsRefreshing ? Strings.FlyoutRefreshing : _state.StatusText;
 

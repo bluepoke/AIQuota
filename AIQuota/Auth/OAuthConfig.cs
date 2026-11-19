@@ -12,7 +12,9 @@ public static class OAuthConfig
 
     public const string AuthorizeUrl = "https://claude.com/cai/oauth/authorize";
     public const string TokenUrl = "https://platform.claude.com/v1/oauth/token";
-    public const string UsageUrl = "https://api.anthropic.com/api/oauth/usage";
+    /// <summary><c>cedar_ember=1</c> adds the limit reset status (#21) to the response, as
+    /// Claude Code asks for it for its <c>/limit-reset</c> command.</summary>
+    public const string UsageUrl = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1";
 
     /// <summary>
     /// Same account-profile endpoint the official CLI calls to resolve the signed-in

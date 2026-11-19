@@ -78,7 +78,9 @@ public static class Strings
     public static string MonitorActiveNote => T("Das aktive Konto wird immer abgerufen", "The active account is always fetched");
     public static string MenuIconPerAccount => T("Ein Tray-Symbol pro überwachtem Konto", "One tray icon per monitored account");
     public static string FlyoutOtherAccounts => T("Weitere Konten", "Other accounts");
-    public static string FlyoutSwitchToAccount(string name) => T($"Zu {name} wechseln", $"Switch to {name}");
+    public static string FlyoutClickToLogInAgain => T(
+        "Anmeldung erforderlich – klicken, um dich erneut anzumelden",
+        "Login required – click to log in again");
     public static string MiniDashboardShow => T("Anzeigen", "Show");
     public static string MiniDashboardShowActive => T("Aktives Konto", "Active account");
     public static string MiniDashboardShowAll => T("Alle überwachten Konten", "All monitored accounts");
@@ -494,6 +496,72 @@ public static class Strings
         var local = reset.ToLocalTime();
         var when = local.Date == DateTime.Now.Date ? $"{local:HH:mm}" : $"{WeekdayShort(local)} {local:HH:mm}";
         return T($" · Reset {when}", $" · resets {when}");
+    }
+
+    // Limit resets (#21)
+
+    /// <summary>"weekly reset" / "2 weekly resets" - as Claude Code names the kinds.</summary>
+    private static string LimitResetName(LimitResetKind kind, int count) => (kind, count == 1) switch
+    {
+        (LimitResetKind.Session, true) => T("5-Stunden-Reset", "5-hour reset"),
+        (LimitResetKind.Session, false) => T("5-Stunden-Resets", "5-hour resets"),
+        (LimitResetKind.Weekly, true) => T("Wochen-Reset", "weekly reset"),
+        (LimitResetKind.Weekly, false) => T("Wochen-Resets", "weekly resets"),
+        (LimitResetKind.Model, true) => T("Fable-Reset", "Fable reset"),
+        (LimitResetKind.Model, false) => T("Fable-Resets", "Fable resets"),
+        (LimitResetKind.Full, true) => T("Komplett-Reset", "full reset"),
+        _ => T("Komplett-Resets", "full resets"),
+    };
+
+    /// <summary>"Sun 23:59" for another day, "23:59" for today.</summary>
+    private static string ShortDayTime(DateTimeOffset at, DateTimeOffset now)
+    {
+        var local = at.ToLocalTime();
+        return local.Date == now.ToLocalTime().Date ? $"{local:HH:mm}" : $"{WeekdayShort(local)} {local:HH:mm}";
+    }
+
+    /// <summary>Flyout and mini dashboard line under the bar the reset refills:
+    /// "↺ 1 weekly reset available · use by Sun 23:59 (in 3d4h)".</summary>
+    public static string LimitResetLine(LimitResetOffer offer, DateTimeOffset now)
+    {
+        var name = LimitResetName(offer.Kind, offer.Count);
+        var text = T($"↺ {offer.Count} {name} verfügbar", $"↺ {offer.Count} {name} available");
+        if (offer.FirstEndsAt is { } end)
+        {
+            var remaining = end - now;
+            var countdown = remaining <= TimeSpan.Zero ? T("in Kürze", "shortly") : $"in {FormatDuration(remaining)}";
+            text += T($" · einlösbar bis {ShortDayTime(end, now)} ({countdown})", $" · use by {ShortDayTime(end, now)} ({countdown})");
+        }
+        return text;
+    }
+
+    /// <summary>Context menu line under the session/week entry.</summary>
+    public static string LimitResetMenuLabel(LimitResetOffer offer) => "    " + LimitResetLine(offer, DateTimeOffset.Now);
+
+    public static string LimitResetMenuToolTip => T(
+        "Einlösen in Claude Code mit /limit-reset. Klicken öffnet die Nutzungsseite.",
+        "Use it in Claude Code with /limit-reset. Click to open the usage page.");
+
+    /// <summary>The flyout's marker next to another account's name: "↺ 2".</summary>
+    public static string LimitResetMarker(int count) => $"↺ {count}";
+
+    /// <summary>"Limit reset available: 1 weekly reset · use by Sun 23:59. Use it in Claude Code with /limit-reset."</summary>
+    public static string NotificationLimitResetAvailable(IReadOnlyList<LimitResetOffer> offers, DateTimeOffset now)
+    {
+        var parts = string.Join(", ", offers.Select(o => $"{o.Count} {LimitResetName(o.Kind, o.Count)}"));
+        var end = offers.Where(o => o.FirstEndsAt is not null).Min(o => o.FirstEndsAt);
+        var deadline = end is { } e ? T($" · einlösbar bis {ShortDayTime(e, now)}", $" · use by {ShortDayTime(e, now)}") : "";
+        return T($"Limit-Reset verfügbar: {parts}{deadline}. Einlösen in Claude Code mit /limit-reset.",
+                 $"Limit reset available: {parts}{deadline}. Use it in Claude Code with /limit-reset.");
+    }
+
+    /// <summary>"Unused weekly reset ends Sun 23:59 (1 left)".</summary>
+    public static string NotificationLimitResetExpiring(LimitResetGrant grant, DateTimeOffset now)
+    {
+        var name = LimitResetName(grant.Kind, 1);
+        var when = grant.EndsAt is { } end ? ShortDayTime(end, now) : "";
+        return T($"Ungenutzter {name} verfällt {when} (noch {grant.ResetsLeft}). Einlösen in Claude Code mit /limit-reset.",
+                 $"Unused {name} ends {when} ({grant.ResetsLeft} left). Use it in Claude Code with /limit-reset.");
     }
 
     public static string ToastNewVersionTitle => T("Update verfügbar", "Update available");

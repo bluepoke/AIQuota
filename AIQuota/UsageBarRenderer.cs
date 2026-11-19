@@ -42,6 +42,11 @@ internal sealed class UsageBarRenderer(FlyoutPalette palette, UsagePalette usage
 
     private float S(float logical) => logical * scale;
 
+    /// <summary>Where the detail lines that open the usage page (<see
+    /// cref="SectionLine.OpensUsagePage"/>) were drawn (or measured) by <see
+    /// cref="DrawSection"/>, for hit-testing.</summary>
+    public List<RectangleF> UsagePageLinks { get; } = [];
+
     /// <summary>A full section, as in the flyout: label and percentage, the bar with its pace
     /// marker and projection, and the detail lines. Returns the y below it (no gap added).</summary>
     public float DrawSection(Graphics? g, UsageSection section, Font labelFont, Font valueFont, Font detailFont, float left, float y, float width)
@@ -53,7 +58,13 @@ internal sealed class UsageBarRenderer(FlyoutPalette palette, UsagePalette usage
 
         foreach (var line in section.Details)
         {
-            DrawText(g, line.Text, detailFont, line.Emphasized ? palette.Text : palette.Secondary, new RectangleF(left, y, width, S(18f)));
+            var rect = new RectangleF(left, y, width, S(18f));
+            DrawText(g, line.Text, detailFont, line.Emphasized ? palette.Text : palette.Secondary, rect);
+            if (line.OpensUsagePage)
+            {
+                var textWidth = TextRenderer.MeasureText(line.Text, detailFont).Width;
+                UsagePageLinks.Add(rect with { Width = Math.Min(width, textWidth) });
+            }
             y += S(18f);
         }
         return y;

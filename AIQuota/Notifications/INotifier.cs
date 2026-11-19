@@ -16,6 +16,12 @@ internal enum UsageAlert
     /// <summary>An additional limit (e.g. a model's weekly limit) crossed the warning
     /// threshold; each limit has its own notification, identified by its key.</summary>
     AdditionalLimit,
+
+    /// <summary>The account was offered new limit resets (#21).</summary>
+    LimitResetAvailable,
+
+    /// <summary>An unused limit reset ends soon (#21).</summary>
+    LimitResetExpiring,
 }
 
 /// <summary>What the user chose on a notification, handled by <see cref="UsageTrayContext"/>.</summary>
