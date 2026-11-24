@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only the window behind Compose; the UI's colours come from Theme.kt. -->
+    <style name="Theme.AiQuota" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+    <color name="window_background">#FFF3F3F3</color>
+    <color name="icon_background">#FF2B2B2B</color>
+</resources>

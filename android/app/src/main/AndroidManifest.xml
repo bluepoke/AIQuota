@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The provider APIs, and the loopback listener for the login redirect. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- No cloud backup: tokens (in noBackupFilesDir anyway) and the usage history never leave
+         the device (#19). -->
+    <application
+        android:name=".AiQuotaApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AiQuota">
+
+        <!-- singleTask: the "Back to AI Quota" link on the login result page (aiquota://)
+             brings this task to the front and closes the Custom Tab above it. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aiquota" android:host="login-complete" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -577,6 +577,24 @@ See [`tools/Screenshots/Program.cs`](tools/Screenshots/Program.cs) for what it r
 Releases are built automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml)
 whenever a tag matching `v*.*.*` is pushed.
 
+### Android app (in development)
+
+An Android app ([#19](https://github.com/bluepoke/ClaudeUsage/issues/19)) lives in
+[`android/`](android/): Kotlin and Jetpack Compose, Android 8.0 or later. So far it shows
+every saved account on one screen, with the flyout's bars, reset times, pace marker,
+forecast and limit resets. Accounts are added by logging in, and fetched every 5 minutes
+while the app is open. The usage rules (parsing, forecast, texts) are ported from the Windows
+app into `android/core` and covered by its tests. The heatmap, settings, background updates,
+notifications and release APKs follow.
+
+Requires the Android SDK (e.g. via Android Studio) and JDK 17 or later:
+
+```
+cd android
+./gradlew test             # core tests
+./gradlew assembleDebug    # app/build/outputs/apk/debug/app-debug.apk
+```
+
 ### MSIX package (Microsoft Store submission)
 
 The same workflow also builds an unsigned `.msix` package for submission to the

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only the launcher label lives here; all other text is in core's Strings (English and
+         German, shared with the Windows app's wording). -->
+    <string name="app_name" translatable="false">AI Quota</string>
+</resources>
