@@ -7,6 +7,9 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import eu.schicht8.aiquota.core.AccountState
+import eu.schicht8.aiquota.core.AppSettings
+import eu.schicht8.aiquota.core.DailyUsageRecord
+import eu.schicht8.aiquota.core.UsageHistoryRecord
 import eu.schicht8.aiquota.core.LoopbackListener
 import eu.schicht8.aiquota.core.OAuthConfig
 import kotlinx.coroutines.CancellationException
@@ -20,21 +23,40 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import java.util.Locale
 import kotlin.time.Duration.Companion.minutes
 
 /** A login waiting for the browser. [linkCopied]: the link went to the clipboard instead.
  * [id] tells two logins for the same account apart. */
 data class LoginInProgress(val targetKey: String?, val linkCopied: Boolean, val id: Long)
 
-class OverviewViewModel(application: Application) : AndroidViewModel(application) {
+/** A screen of the app; the overview is the start. */
+sealed interface Screen {
+    /** The account the screen is about, if any. */
+    val accountKey: String? get() = null
+
+    data object Overview : Screen
+    data class Details(override val accountKey: String) : Screen
+    data class Heatmap(override val accountKey: String) : Screen
+    data object Settings : Screen
+}
+
+class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as AiQuotaApplication).graph
     private val monitor = graph.monitor
 
     val accounts: StateFlow<List<AccountState>> = monitor.states
+    val settings: StateFlow<AppSettings> = graph.settings
+
+    private val _screens = MutableStateFlow<List<Screen>>(listOf(Screen.Overview))
+    /** The way back: the current screen last. */
+    val screens: StateFlow<List<Screen>> = _screens.asStateFlow()
+
+    /** Asked for the notification permission once this run. */
+    var notificationPermissionAsked = false
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
@@ -52,7 +74,7 @@ class OverviewViewModel(application: Application) : AndroidViewModel(application
     /** URLs for the activity to open in a Custom Tab. */
     val openUrls: Flow<String> = _openUrls.receiveAsFlow()
 
-    private fun strings() = stringsFor(Locale.getDefault())
+    private fun strings() = graph.strings()
 
     /** A storage failure (disk full, Keystore unavailable) in a background step is shown,
      * not a crash. */
@@ -129,7 +151,42 @@ class OverviewViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun remove(key: String) {
-        viewModelScope.launch(Dispatchers.IO + showFailure) { monitor.remove(key) }
+        _screens.update { list -> list.filter { it.accountKey != key } }
+        viewModelScope.launch(Dispatchers.IO + showFailure) {
+            monitor.remove(key)
+            graph.notifier.cancelAccount(key)
+        }
+    }
+
+    /** Moves the account up (-1) or down (1) in the list. */
+    fun move(key: String, by: Int) {
+        viewModelScope.launch(Dispatchers.IO + showFailure) { monitor.move(key, by) }
+    }
+
+    fun updateSettings(change: (AppSettings) -> AppSettings) {
+        viewModelScope.launch(Dispatchers.IO + showFailure) { graph.updateSettings(change) }
+    }
+
+    /** An account's raw history, for the 7-day chart (reads the file the first time). */
+    suspend fun history(key: String): List<UsageHistoryRecord> = withContext(Dispatchers.IO) { monitor.history(key) }
+
+    /** An account's per-day values, for the heatmap. */
+    suspend fun dailyUsage(key: String): List<DailyUsageRecord> = withContext(Dispatchers.IO) { monitor.dailyUsage(key) }
+
+    fun open(screen: Screen) {
+        _screens.update { if (it.last() == screen) it else it + screen }
+    }
+
+    /** Opens an account's details - from a notification - on top of the overview. */
+    fun openAccount(key: String) {
+        if (accounts.value.any { it.account.key == key }) _screens.value = listOf(Screen.Overview, Screen.Details(key))
+    }
+
+    /** Returns false on the overview, where back leaves the app. */
+    fun back(): Boolean {
+        if (_screens.value.size <= 1) return false
+        _screens.update { it.dropLast(1) }
+        return true
     }
 
     private fun copyToClipboard(text: String) {

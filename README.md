@@ -580,12 +580,20 @@ whenever a tag matching `v*.*.*` is pushed.
 ### Android app (in development)
 
 An Android app ([#19](https://github.com/bluepoke/ClaudeUsage/issues/19)) lives in
-[`android/`](android/): Kotlin and Jetpack Compose, Android 8.0 or later. So far it shows
-every saved account on one screen, with the flyout's bars, reset times, pace marker,
-forecast and limit resets. Accounts are added by logging in, and fetched every 5 minutes
-while the app is open. The usage rules (parsing, forecast, texts) are ported from the Windows
-app into `android/core` and covered by its tests. The heatmap, settings, background updates,
-notifications and release APKs follow.
+[`android/`](android/): Kotlin and Jetpack Compose, Android 8.0 or later. It shows every
+saved account on one screen, with the flyout's bars, reset times, pace marker, forecast and
+limit resets; tapping an account opens its details with the 7-day chart and its yearly
+heatmap. Accounts are added by logging in, and can be renamed, reordered and removed.
+
+While the app is open, each account is fetched every 5 minutes; while it's closed, a
+background job fetches all accounts every 15 minutes (Android may delay it to save battery).
+Every fetch is recorded in the account's history on the phone, and notifies as on Windows:
+at 90%, shortly before the session limit, and for limit resets - one notification channel
+per kind. Settings: language, theme, accessibility mode, pace markers, both update
+intervals and notifications.
+
+The usage rules (parsing, forecast, daily values, heatmap, notifications) are ported from
+the Windows app into `android/core` and covered by its tests. Release APKs follow.
 
 Requires the Android SDK (e.g. via Android Studio) and JDK 17 or later:
 

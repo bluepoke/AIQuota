@@ -25,6 +25,9 @@ data class UsageForecast(
     val timeToLimit: Duration = Duration.ZERO,
     val projectedPercent: Double? = null,
 ) {
+    /** The time to the limit if it's reached before the reset, else null. */
+    val limitIn: Duration? get() = if (kind == ForecastKind.Limit) timeToLimit else null
+
     companion object {
         val NONE = UsageForecast(ForecastKind.None)
     }

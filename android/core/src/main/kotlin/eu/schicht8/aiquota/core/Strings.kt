@@ -6,8 +6,10 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
+import java.time.DayOfWeek
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -28,6 +30,9 @@ class Strings(val language: AppLanguage, val zone: ZoneId = ZoneId.systemDefault
 
     val appTitle get() = t("Claude Nutzung", "Claude Usage")
     val accountUnnamed get() = t("Konto (Name noch unbekannt)", "Account (name not known yet)")
+
+    /** The account's short name or profile label, or that it isn't known yet. */
+    fun accountName(account: SavedAccount): String = account.displayName ?: accountUnnamed
     val addAccount get() = t("Konto hinzufügen", "Add account")
     val noAccounts get() = t(
         "Noch kein Konto. Melde dich mit deinem Claude-Konto an, um seine Nutzung zu sehen.",
@@ -197,6 +202,192 @@ class Strings(val language: AppLanguage, val zone: ZoneId = ZoneId.systemDefault
         LimitResetKind.Full -> if (count == 1) t("Komplett-Reset", "full reset") else t("Komplett-Resets", "full resets")
     }
 
+    // ------------------------------------------------------------------ screens and settings
+
+    val back get() = t("Zurück", "Back")
+    val moveUp get() = t("Nach oben", "Move up")
+    val moveDown get() = t("Nach unten", "Move down")
+    val openHeatmap get() = t("Jahresübersicht anzeigen", "Show yearly heatmap")
+    val openUsagePage get() = t("Nutzungsseite öffnen", "Open usage page")
+
+    val settingsTitle get() = t("Einstellungen", "Settings")
+    val settingsLanguage get() = t("Sprache", "Language")
+    val settingsTheme get() = t("Design", "Theme")
+    val followSystem get() = t("Wie das System", "System default")
+    val languageGerman get() = "Deutsch"
+    val languageEnglish get() = "English"
+    val themeLight get() = t("Hell", "Light")
+    val themeDark get() = t("Dunkel", "Dark")
+    val settingsDisplay get() = t("Anzeige", "Display")
+    val accessibilityMode get() = t("Barrierefreiheitsmodus (kontrastreiche Graustufen)", "Accessibility mode (high-contrast greyscale)")
+    val showPaceMarkers get() = t("Pace-Markierungen anzeigen", "Show pace markers")
+    val settingsUpdates get() = t("Aktualisierung", "Updates")
+    val pollInterval get() = t("Bei geöffneter App", "While the app is open")
+    val backgroundUpdates get() = t("Im Hintergrund", "In the background")
+    val backgroundOff get() = t("Aus", "Off")
+    val backgroundNote get() = t(
+        "Android kann Hintergrund-Aktualisierungen verzögern, um Akku zu sparen.",
+        "Android may delay background updates to save battery.",
+    )
+    val settingsNotifications get() = t("Benachrichtigungen", "Notifications")
+    val notificationsEnabled get() = t("Bei 90%, kurz vor dem Sitzungslimit und bei Limit-Resets", "At 90%, shortly before the session limit, and for limit resets")
+    val notificationsBlocked get() = t(
+        "Benachrichtigungen sind für AI Quota in den Systemeinstellungen ausgeschaltet.",
+        "Notifications are turned off for AI Quota in the system settings.",
+    )
+    val notificationChannels get() = t("Arten von Benachrichtigungen…", "Notification types…")
+    fun versionLabel(version: String) = t("AI Quota Version $version", "AI Quota version $version")
+
+    /** "Every 5 min", "Every 1 h". */
+    fun everyInterval(interval: Duration): String {
+        val minutes = interval.toMinutes()
+        val amount = if (minutes % 60 == 0L) "${minutes / 60} h" else "$minutes min"
+        return t("Alle $amount", "Every $amount")
+    }
+
+    // ------------------------------------------------------------------ 7-day chart
+
+    val historyTitle get() = t("Letzte 7 Tage", "Last 7 days")
+    val legendUsage get() = t("Woche", "Week")
+    val legendPace get() = t("Pace", "Even pace")
+
+    /** Shown instead of the chart until there's enough history - with an estimate of how long
+     * that takes while the app keeps fetching ([remaining] zero or less: the next fetch does). */
+    fun collectingData(minPoints: Int, minSpan: Duration, remaining: Duration): String {
+        val eta = if (remaining > Duration.ZERO) {
+            t("Noch ca. ${formatDuration(remaining)}.", "About ${formatDuration(remaining)} to go.")
+        } else {
+            t("Mit dem nächsten Update.", "With the next refresh.")
+        }
+        return t(
+            "Sammle Daten… Das Diagramm erscheint ab $minPoints Datenpunkten mit insgesamt mindestens ${formatDuration(minSpan)} Abstand. $eta",
+            "Collecting data… The chart appears once there are at least $minPoints data points spanning at least ${formatDuration(minSpan)} in total. $eta",
+        )
+    }
+
+    /** "Mon 14:30 · 62%". */
+    fun chartPoint(time: Instant, percent: Double): String {
+        val local = time.local()
+        return "${weekdayShort(local)} ${local.format(HM)} · ${percent.roundHalfEven()}%"
+    }
+
+    // ------------------------------------------------------------------ yearly heatmap
+
+    val heatmapTitle get() = t("Jahresübersicht", "Yearly heatmap")
+    val heatmapExplanation get() = t(
+        "Jedes Feld: Anteil des Wochenkontingents, der an diesem Tag verbraucht wurde",
+        "Each square: share of the weekly quota used that day",
+    )
+    val heatmapLess get() = t("Weniger", "Less")
+    val heatmapMore get() = t("Mehr", "More")
+    val heatmapNoData get() = t("Keine Daten", "No data")
+    val heatmapNoUsageYet get() = t("Im letzten Jahr wurde noch keine Nutzung aufgezeichnet", "No usage recorded in the last year yet")
+    val heatmapTapHint get() = t("Tippe auf einen Tag, um seine Werte zu sehen.", "Tap a day to see its values.")
+
+    /** Short month name, 1 = January. */
+    fun monthShort(month: Int): String = (if (language == AppLanguage.German) MONTHS_SHORT_DE else MONTHS_SHORT_EN)[month - 1]
+
+    fun weekdayShort(day: DayOfWeek): String =
+        (if (language == AppLanguage.German) WEEKDAYS_SHORT_DE else WEEKDAYS_SHORT_EN)[day.value % 7]
+
+    /** "Tue, 4 Nov 2026" / "Di, 4. Nov 2026". */
+    fun heatmapDate(date: LocalDate): String = t(
+        "${weekdayShort(date.dayOfWeek)}, ${date.dayOfMonth}. ${monthShort(date.monthValue)} ${date.year}",
+        "${weekdayShort(date.dayOfWeek)}, ${date.dayOfMonth} ${monthShort(date.monthValue)} ${date.year}",
+    )
+
+    /** One day's values; [weekPoints] null means there were no samples that day. */
+    fun heatmapDayText(date: LocalDate, weekPoints: Double?, sessionPeak: Double, activeHours: Int): String {
+        if (weekPoints == null) return "${heatmapDate(date)} · " + t("keine Daten (App lief nicht)", "no data (app not running)")
+        val percent = weekPoints.roundHalfEven()
+        val peak = sessionPeak.roundHalfEven()
+        return t(
+            "${heatmapDate(date)} · $percent% des Wochenkontingents · Sitzungsspitze $peak% · $activeHours h aktiv",
+            "${heatmapDate(date)} · $percent% of the weekly quota · session peak $peak% · $activeHours h active",
+        )
+    }
+
+    /** "3–9 Mar" / "28 Apr – 4 May" (German: "3.–9. Mär", "28. Apr – 4. Mai"). */
+    fun heatmapWeekRange(monday: LocalDate): String {
+        val sunday = monday.plusDays(6)
+        if (monday.month == sunday.month) {
+            return t("${monday.dayOfMonth}.–${sunday.dayOfMonth}. ${monthShort(sunday.monthValue)}", "${monday.dayOfMonth}–${sunday.dayOfMonth} ${monthShort(sunday.monthValue)}")
+        }
+        return t(
+            "${monday.dayOfMonth}. ${monthShort(monday.monthValue)} – ${sunday.dayOfMonth}. ${monthShort(sunday.monthValue)}",
+            "${monday.dayOfMonth} ${monthShort(monday.monthValue)} – ${sunday.dayOfMonth} ${monthShort(sunday.monthValue)}",
+        )
+    }
+
+    /** "128 active days in the last year · busiest week: 98% (3–9 Mar)". */
+    fun heatmapSummary(activeDays: Int, busiestWeekPoints: Double, busiestWeekStart: LocalDate): String {
+        val days = t(
+            if (activeDays == 1) "1 aktiver Tag im letzten Jahr" else "$activeDays aktive Tage im letzten Jahr",
+            if (activeDays == 1) "1 active day in the last year" else "$activeDays active days in the last year",
+        )
+        val percent = busiestWeekPoints.roundHalfEven()
+        val range = heatmapWeekRange(busiestWeekStart)
+        return t("$days · stärkste Woche: $percent% ($range)", "$days · busiest week: $percent% ($range)")
+    }
+
+    // ------------------------------------------------------------------ notifications
+
+    /** "Session usage (5h) at 92% · resets 14:30". */
+    fun notificationSessionWarning(percent: Int, resetsAt: Instant?, now: Instant) =
+        t("Sitzungsnutzung (5h) bei $percent%", "Session usage (5h) at $percent%") + notificationResetSuffix(resetsAt, now)
+
+    /** "Weekly usage at 90% · resets Mon 09:00". */
+    fun notificationWeeklyWarning(percent: Int, resetsAt: Instant?, now: Instant) =
+        t("Wochennutzung bei $percent%", "Weekly usage at $percent%") + notificationResetSuffix(resetsAt, now)
+
+    /** "Week · Opus at 91% · resets Mon 09:00". */
+    fun notificationLimitWarning(limit: UsageLimitInfo, now: Instant) =
+        t("${limitLabel(limit)} bei ${limit.roundedPercent}%", "${limitLabel(limit)} at ${limit.roundedPercent}%") +
+            notificationResetSuffix(limit.resetsAt, now)
+
+    fun notificationSessionForecast(timeToLimit: Duration) = t(
+        "Sitzungslimit (5h) in ~${formatDuration(timeToLimit)} beim aktuellen Verbrauch",
+        "Session limit (5h) in ~${formatDuration(timeToLimit)} at current rate",
+    )
+
+    /** "Limit reset available: 1 weekly reset · use by Sun 23:59. Use it in Claude Code with /limit-reset." */
+    fun notificationLimitResetAvailable(offers: List<LimitResetOffer>, now: Instant): String {
+        val parts = offers.joinToString(", ") { "${it.count} ${limitResetName(it.kind, it.count)}" }
+        val end = offers.mapNotNull { it.firstEndsAt }.minOrNull()
+        val deadline = end?.let { t(" · einlösbar bis ${shortDayTime(it, now)}", " · use by ${shortDayTime(it, now)}") } ?: ""
+        return t(
+            "Limit-Reset verfügbar: $parts$deadline. Einlösen in Claude Code mit /limit-reset.",
+            "Limit reset available: $parts$deadline. Use it in Claude Code with /limit-reset.",
+        )
+    }
+
+    /** "Unused weekly reset ends Sun 23:59 (1 left). Use it in Claude Code with /limit-reset." */
+    fun notificationLimitResetExpiring(grant: LimitResetGrant, now: Instant): String {
+        val name = limitResetName(grant.kind, 1)
+        val time = grant.endsAt?.let { shortDayTime(it, now) } ?: ""
+        return t(
+            "Ungenutzter $name verfällt $time (noch ${grant.resetsLeft}). Einlösen in Claude Code mit /limit-reset.",
+            "Unused $name ends $time (${grant.resetsLeft} left). Use it in Claude Code with /limit-reset.",
+        )
+    }
+
+    /** " · resets 14:30" for today, " · resets Mon 09:00" otherwise. */
+    private fun notificationResetSuffix(resetsAt: Instant?, now: Instant): String {
+        val reset = resetsAt ?: return ""
+        val time = shortDayTime(reset, now)
+        return t(" · Reset $time", " · resets $time")
+    }
+
+    /** The notification channels, one per [UsageAlertKind]. */
+    fun alertChannelName(kind: UsageAlertKind): String = when (kind) {
+        UsageAlertKind.Session -> t("Sitzung (5h) bei 90%", "Session (5h) at 90%")
+        UsageAlertKind.Weekly -> t("Woche bei 90%", "Week at 90%")
+        UsageAlertKind.SessionForecast -> t("Sitzungslimit bald erreicht", "Session limit soon")
+        UsageAlertKind.AdditionalLimit -> t("Weitere Limits bei 90%", "Additional limits at 90%")
+        UsageAlertKind.LimitResetAvailable -> t("Limit-Reset verfügbar", "Limit reset available")
+        UsageAlertKind.LimitResetExpiring -> t("Limit-Reset verfällt bald", "Limit reset ends soon")
+    }
+
     // ------------------------------------------------------------------ formatting
 
     private fun Instant.local(): ZonedDateTime = atZone(zone)
@@ -238,6 +429,8 @@ class Strings(val language: AppLanguage, val zone: ZoneId = ZoneId.systemDefault
         private val WEEKDAYS_EN = listOf("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
         private val WEEKDAYS_SHORT_DE = listOf("So", "Mo", "Di", "Mi", "Do", "Fr", "Sa")
         private val WEEKDAYS_SHORT_EN = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+        private val MONTHS_SHORT_DE = listOf("Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez")
+        private val MONTHS_SHORT_EN = listOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
         /** Shortest-possible duration, e.g. "1.5h", "45min" or "4d15h" - as on Windows. */
         fun formatDuration(remaining: Duration): String {

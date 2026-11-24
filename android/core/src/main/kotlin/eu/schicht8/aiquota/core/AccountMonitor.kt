@@ -46,7 +46,10 @@ sealed interface LoginMessage {
  * Monitors every saved account at once (#19): each is fetched on its own schedule, recorded
  * in its own history, and has its own values, errors and "login required" state - a failing
  * account never affects the others. Rate limiting (429) backs off per account, as on Windows
- * (#18). The app calls [fetchDue] periodically while it's in the foreground.
+ * (#18). The app calls [fetchDue] periodically while it's in the foreground, and the
+ * background job once per run - often in a fresh process, so each account's backoff and
+ * which notifications it has had are kept in [stateStore]. A fetch's notifications (see
+ * [UsageAlerts]) go to [alerts].
  */
 class AccountMonitor(
     private val accounts: AccountStore,
@@ -54,10 +57,17 @@ class AccountMonitor(
     private val usage: UsageSource,
     private val historyDirectory: File,
     private val clock: () -> Instant = Instant::now,
-    private val pollInterval: Duration = DEFAULT_POLL_INTERVAL,
+    private val pollInterval: () -> Duration = { DEFAULT_POLL_INTERVAL },
     private val newKey: () -> String = { UUID.randomUUID().toString().replace("-", "") },
+    private val stateStore: MonitorStateStore = InMemoryMonitorStateStore(),
+    private val alerts: AlertSink? = null,
+    /** The language of the notification texts, at the time they're shown. */
+    private val strings: () -> Strings = { Strings(AppLanguage.English) },
 ) {
     private val histories = mutableMapOf<String, JsonlUsageHistory>()
+
+    /** Each account's backoff and notified alerts, as last saved - guarded by [lock]. */
+    private val persisted = stateStore.loadAll().toMutableMap()
 
     /** Held while the account list, the stores or an account's state change - logins, merges,
      * renames, removals and recording a fetch run concurrently (fetches on IO threads). */
@@ -114,6 +124,10 @@ class AccountMonitor(
         tokens.save(account.key, newTokens)
         val resolved = if (info != null) applyAccountInfo(account, info).also { resolvedAccounts += it.key } else account
         updateState(resolved.key) { it.copy(hasToken = true, status = null, error = null, rateLimitStrikes = 0, nextFetchAt = clock()) }
+        persisted[resolved.key]?.let { saved ->
+            persisted[resolved.key] = saved.copy(backoffUntil = null, rateLimitStrikes = 0)
+            stateStore.save(resolved.key, persisted.getValue(resolved.key))
+        }
         message
     }
 
@@ -154,8 +168,43 @@ class AccountMonitor(
     fun remove(key: String): Unit = synchronized(lock) {
         tokens.clear(key)
         accounts.remove(key)
+        persisted.remove(key)
+        stateStore.remove(key)
         _states.update { list -> list.filter { it.account.key != key } }
     }
+
+    /** After a change of the poll interval: an account that isn't backing off is fetched one
+     * new interval after its last values, if that's sooner than planned. */
+    fun pollIntervalChanged() {
+        val interval = pollInterval()
+        _states.update { list ->
+            list.map { state ->
+                val fetchedAt = state.snapshot?.fetchedAt
+                if (state.rateLimitStrikes > 0 || fetchedAt == null) state
+                else state.copy(nextFetchAt = minOf(state.nextFetchAt, fetchedAt.plus(interval)))
+            }
+        }
+    }
+
+    /** Moves the account [by] places in the list (negative: up), within its bounds. */
+    fun move(key: String, by: Int): Unit = synchronized(lock) {
+        val list = _states.value.toMutableList()
+        val index = list.indexOfFirst { it.account.key == key }
+        if (index < 0) return
+        val target = (index + by).coerceIn(0, list.lastIndex)
+        if (target == index) return
+        list.add(target, list.removeAt(index))
+        accounts.reorder(list.map { it.account.key })
+        _states.value = list
+    }
+
+    /** An account's raw usage history (the last 35 days), oldest first - for the 7-day chart. */
+    fun history(key: String): List<UsageHistoryRecord> =
+        state(key)?.account?.accountId?.let { historyFor(it).all }.orEmpty()
+
+    /** An account's per-day values, oldest first - for the yearly heatmap. */
+    fun dailyUsage(key: String): List<DailyUsageRecord> =
+        state(key)?.account?.accountId?.let { historyFor(it).daily }.orEmpty()
 
     /** Marks the accounts matching [select] as fetching and returns their keys - in one
      * step, so two callers never fetch the same account at once. */
@@ -198,9 +247,15 @@ class AccountMonitor(
         }
     }
 
-    private fun record(account: SavedAccount, result: UsageFetchResult): Unit = synchronized(lock) {
+    private fun record(account: SavedAccount, result: UsageFetchResult) {
+        val shown = synchronized(lock) { recordLocked(account, result) }
+        if (shown.isNotEmpty()) alerts?.show(account, shown)
+    }
+
+    /** Stores the result; returns the notifications it calls for. */
+    private fun recordLocked(account: SavedAccount, result: UsageFetchResult): List<UsageAlert> {
         val key = account.key
-        if (state(key) == null) return
+        val previous = state(key) ?: return emptyList()
         val now = clock()
         val history = account.accountId?.let(::historyFor)
         if (result.status == UsageFetchStatus.Ok && result.snapshot != null) {
@@ -209,25 +264,38 @@ class AccountMonitor(
         // The usage API rejected the token: only this account needs a new login, and it's
         // skipped until it has one.
         if (result.status == UsageFetchStatus.AuthExpired) tokens.clear(key)
-        val hasToken = tokens.exists(key)
-        updateState(key) { state ->
-            val strikes = if (result.rateLimited) state.rateLimitStrikes + 1 else 0
-            val base = state.copy(
-                hasToken = hasToken,
-                status = result.status,
-                error = result.error,
-                rateLimitStrikes = strikes,
-                nextFetchAt = now.plus(delayAfter(result, strikes, pollInterval)),
-            )
-            when (result.status) {
-                UsageFetchStatus.Ok -> {
-                    val snapshot = result.snapshot ?: state.snapshot
-                    val (session, week) = forecasts(history?.all.orEmpty(), snapshot, now)
-                    base.copy(snapshot = snapshot, sessionForecast = session, weeklyForecast = week)
-                }
-                else -> base
+
+        val strikes = if (result.rateLimited) previous.rateLimitStrikes + 1 else 0
+        val nextFetchAt = now.plus(delayAfter(result, strikes, pollInterval()))
+        var saved = persisted[key] ?: PersistedAccountState()
+        saved = saved.copy(backoffUntil = if (result.rateLimited) nextFetchAt else null, rateLimitStrikes = strikes)
+
+        var next = previous.copy(
+            hasToken = tokens.exists(key),
+            status = result.status,
+            error = result.error,
+            rateLimitStrikes = strikes,
+            nextFetchAt = nextFetchAt,
+        )
+        var shown = emptyList<UsageAlert>()
+        if (result.status == UsageFetchStatus.Ok) {
+            val snapshot = result.snapshot ?: previous.snapshot
+            val (session, week) = forecasts(history?.all.orEmpty(), snapshot, now)
+            next = next.copy(snapshot = snapshot, sessionForecast = session, weeklyForecast = week)
+            if (result.snapshot != null) {
+                val texts = strings()
+                val name = if (_states.value.size > 1) texts.accountName(account) else null
+                val evaluation = UsageAlerts.evaluate(result.snapshot, session, saved.alerts, name, now, texts)
+                saved = saved.copy(alerts = evaluation.state)
+                shown = evaluation.alerts
             }
         }
+        if (saved != persisted[key]) {
+            persisted[key] = saved
+            stateStore.save(key, saved)
+        }
+        updateState(key) { next.copy(isFetching = it.isFetching) }
+        return shown
     }
 
     private fun state(key: String) = _states.value.firstOrNull { it.account.key == key }
@@ -236,15 +304,19 @@ class AccountMonitor(
         _states.update { list -> list.map { if (it.account.key == key) change(it) else it } }
     }
 
-    /** An account's last known values from its history, shown until its first fetch. */
+    /** An account's last known values from its history, shown until its first fetch - which
+     * is right away, unless it's still backing off after rate limiting. */
     private fun initialState(account: SavedAccount): AccountState {
         val now = clock()
         val records = account.accountId?.let { historyFor(it).all }.orEmpty()
         val snapshot = records.lastOrNull()?.toSnapshot(now)
         val (session, week) = forecasts(records, snapshot, now)
+        val saved = persisted[account.key]
         return AccountState(
             account, hasToken = tokens.exists(account.key), snapshot = snapshot,
-            sessionForecast = session, weeklyForecast = week, nextFetchAt = now,
+            sessionForecast = session, weeklyForecast = week,
+            nextFetchAt = saved?.backoffUntil?.takeIf { it > now } ?: now,
+            rateLimitStrikes = saved?.rateLimitStrikes ?: 0,
         )
     }
 

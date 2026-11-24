@@ -9,7 +9,7 @@ import java.time.Instant
  * history and tells whether two logins are the same account; null until fetched once.
  * [label]: "Name (email)", just the name, or just the email, from the profile.
  * [shortName]: optional name the user gave the account, e.g. "Work".
- * [addedAt]: when it was added - the order of the account list. */
+ * [addedAt]: when it was added. */
 data class SavedAccount(
     val key: String,
     val accountId: String?,
@@ -23,10 +23,15 @@ data class SavedAccount(
 
 /** Where the saved accounts are kept (not their tokens: see [TokenStore]). */
 interface AccountStore {
-    /** All saved accounts, oldest first. */
+    /** All saved accounts, in the list's order - new ones are added at the end. */
     fun loadAll(): List<SavedAccount>
+
+    /** Adds the account at the end, or replaces it in its place. */
     fun save(account: SavedAccount)
     fun remove(key: String)
+
+    /** Puts the accounts in the order of [keys]; accounts not in it keep their place after them. */
+    fun reorder(keys: List<String>)
 }
 
 /** The OAuth tokens per account - stored encrypted, on the device only. */

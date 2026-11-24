@@ -39,65 +39,78 @@ import eu.schicht8.aiquota.core.Strings
 import eu.schicht8.aiquota.core.UsageFetchStatus
 import eu.schicht8.aiquota.core.UsageSection
 import eu.schicht8.aiquota.core.UsageSections
-import java.time.Instant
+
+/** What a card's menu can do; a null move isn't possible (first or last in the list). */
+class AccountCardActions(
+    val open: () -> Unit,
+    val rename: () -> Unit,
+    val moveUp: (() -> Unit)?,
+    val moveDown: (() -> Unit)?,
+    val remove: () -> Unit,
+)
 
 /**
  * One account on the overview: its name and status, then - like the Windows flyout - the
  * session, week, credit and additional limit bars with percentages, reset times, pace
  * marker, forecast and available limit resets. Without a token it shows "login required"
- * with a button to log in again, and no values.
+ * with a button to log in again, and no values. A tap opens the account's details.
  */
 @Composable
 fun AccountCard(
     state: AccountState,
-    now: Instant,
-    strings: Strings,
+    app: AppContext,
+    showPaceMarker: Boolean,
     loginEnabled: Boolean,
-    onLogin: () -> Unit,
-    onRename: () -> Unit,
-    onRemove: () -> Unit,
-    onOpenUsagePage: () -> Unit,
+    actions: AccountCardActions,
     modifier: Modifier = Modifier,
 ) {
-    val colors = LocalAiQuotaColors.current
-    val card = colors.card
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, Color(card.border)),
-        colors = CardDefaults.cardColors(containerColor = Color(card.background), contentColor = Color(card.text)),
-    ) {
-        Column(Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 16.dp)) {
-            Header(state, strings, loginEnabled, onLogin, onRename, onRemove)
-            Column(Modifier.padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                if (!state.hasToken) {
-                    Button(onClick = onLogin, enabled = loginEnabled) { Text(strings.logInAgain) }
-                } else {
-                    val snapshot = state.snapshot
-                    if (snapshot != null) {
-                        UsageSections.build(snapshot, state.sessionForecast, state.weeklyForecast, showPaceMarker = true, now, strings)
-                            .forEach { Section(it, onOpenUsagePage) }
-                    }
-                }
+    UsageCard(modifier, onClick = actions.open) {
+        Header(state, app, loginEnabled, actions)
+        AccountUsage(state, app, showPaceMarker, loginEnabled)
+    }
+}
+
+/** A card in the flyout's colours. */
+@Composable
+fun UsageCard(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, content: @Composable () -> Unit) {
+    val card = LocalAiQuotaColors.current.card
+    val shape = RoundedCornerShape(8.dp)
+    val border = BorderStroke(1.dp, Color(card.border))
+    val colors = CardDefaults.cardColors(containerColor = Color(card.background), contentColor = Color(card.text))
+    val inner: @Composable () -> Unit = {
+        Column(Modifier.padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 16.dp)) { content() }
+    }
+    if (onClick != null) {
+        Card(onClick = onClick, modifier = modifier.fillMaxWidth(), shape = shape, border = border, colors = colors) { inner() }
+    } else {
+        Card(modifier = modifier.fillMaxWidth(), shape = shape, border = border, colors = colors) { inner() }
+    }
+}
+
+/** The account's bars - or, without a token, the button to log in again. */
+@Composable
+fun AccountUsage(state: AccountState, app: AppContext, showPaceMarker: Boolean, loginEnabled: Boolean) {
+    Column(Modifier.padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (!state.hasToken) {
+            Button(onClick = { app.startLogin(state) }, enabled = loginEnabled) { Text(app.strings.logInAgain) }
+        } else {
+            val snapshot = state.snapshot
+            if (snapshot != null) {
+                UsageSections.build(snapshot, state.sessionForecast, state.weeklyForecast, showPaceMarker, app.now, app.strings)
+                    .forEach { Section(it, app::openUsagePage) }
             }
         }
     }
 }
 
 @Composable
-private fun Header(
-    state: AccountState,
-    strings: Strings,
-    loginEnabled: Boolean,
-    onLogin: () -> Unit,
-    onRename: () -> Unit,
-    onRemove: () -> Unit,
-) {
+private fun Header(state: AccountState, app: AppContext, loginEnabled: Boolean, actions: AccountCardActions) {
+    val strings = app.strings
     val card = LocalAiQuotaColors.current.card
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
             Text(
-                state.account.displayName ?: strings.accountUnnamed,
+                strings.accountName(state.account),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -111,25 +124,42 @@ private fun Header(
                 Icon(painterResource(R.drawable.ic_more_vert), contentDescription = strings.moreOptions, tint = Color(card.secondary))
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(text = { Text(strings.logInAgain) }, enabled = loginEnabled, onClick = {
+                MenuItem(strings.logInAgain, enabled = loginEnabled) {
                     menuOpen = false
-                    onLogin()
-                })
-                DropdownMenuItem(text = { Text(strings.rename) }, onClick = {
+                    app.startLogin(state)
+                }
+                MenuItem(strings.rename) {
                     menuOpen = false
-                    onRename()
-                })
-                DropdownMenuItem(text = { Text(strings.remove) }, onClick = {
+                    actions.rename()
+                }
+                actions.moveUp?.let { moveUp ->
+                    MenuItem(strings.moveUp) {
+                        menuOpen = false
+                        moveUp()
+                    }
+                }
+                actions.moveDown?.let { moveDown ->
+                    MenuItem(strings.moveDown) {
+                        menuOpen = false
+                        moveDown()
+                    }
+                }
+                MenuItem(strings.remove) {
                     menuOpen = false
-                    onRemove()
-                })
+                    actions.remove()
+                }
             }
         }
     }
 }
 
+@Composable
+private fun MenuItem(text: String, enabled: Boolean = true, onClick: () -> Unit) {
+    DropdownMenuItem(text = { Text(text) }, enabled = enabled, onClick = onClick)
+}
+
 /** "Login required", "Refreshing…", the fetch error, or when the values are from. */
-private fun statusText(state: AccountState, strings: Strings): String {
+fun statusText(state: AccountState, strings: Strings): String {
     val snapshot = state.snapshot
     val error = state.error
     return when {

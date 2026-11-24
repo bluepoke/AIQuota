@@ -61,18 +61,22 @@ data class UsagePalette(
     }
 }
 
-/** The card colours for the light and dark theme - the Windows flyout's. */
+/** The card colours for the light and dark theme - the Windows flyout's. [grid] and [pace]:
+ * the 7-day chart's grid lines and even-pace line. */
 data class CardPalette(
+    val isLight: Boolean,
     val background: Long,
     val text: Long,
     val secondary: Long,
     val track: Long,
     val border: Long,
+    val grid: Long,
+    val pace: Long,
 ) {
     companion object {
         fun of(light: Boolean) = if (light) LIGHT else DARK
 
-        private val LIGHT = CardPalette(0xFFF9F9F9, 0xFF1A1A1A, 0xFF606060, 0xFFD6D6D6, 0xFFD6D6D6)
-        private val DARK = CardPalette(0xFF2B2B2B, 0xFFFFFFFF, 0xFFB2B2B2, 0xFF505050, 0xFF464646)
+        private val LIGHT = CardPalette(true, 0xFFF9F9F9, 0xFF1A1A1A, 0xFF606060, 0xFFD6D6D6, 0xFFD6D6D6, 0xFFE5E5E5, 0xFF464646)
+        private val DARK = CardPalette(false, 0xFF2B2B2B, 0xFFFFFFFF, 0xFFB2B2B2, 0xFF505050, 0xFF464646, 0xFF3E3E3E, 0xFFCDCDCD)
     }
 }

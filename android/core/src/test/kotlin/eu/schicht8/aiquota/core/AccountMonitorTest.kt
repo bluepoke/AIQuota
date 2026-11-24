@@ -285,12 +285,17 @@ class AccountMonitorTest {
 
 class InMemoryAccountStore : AccountStore {
     private val accounts = linkedMapOf<String, SavedAccount>()
-    override fun loadAll() = accounts.values.sortedBy { it.addedAt }
+    override fun loadAll() = accounts.values.toList()
     override fun save(account: SavedAccount) {
         accounts[account.key] = account
     }
     override fun remove(key: String) {
         accounts.remove(key)
+    }
+    override fun reorder(keys: List<String>) {
+        val ordered = keys.mapNotNull { accounts[it] } + accounts.values.filter { it.key !in keys }
+        accounts.clear()
+        ordered.forEach { accounts[it.key] = it }
     }
 }
 

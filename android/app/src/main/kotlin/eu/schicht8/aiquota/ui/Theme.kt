@@ -1,6 +1,5 @@
 package eu.schicht8.aiquota.ui
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -16,10 +15,11 @@ data class AiQuotaColors(val card: CardPalette, val usage: UsagePalette, val isL
 
 val LocalAiQuotaColors = staticCompositionLocalOf { AiQuotaColors(CardPalette.of(true), UsagePalette.of(false, true), true) }
 
-/** Light or dark, following the system (#19). Accessibility mode (#12) follows with settings. */
+/** Light or dark (by default following the system, #19), and the greyscale palette in
+ * accessibility mode (#12). */
 @Composable
-fun AiQuotaTheme(content: @Composable () -> Unit) {
-    val light = !isSystemInDarkTheme()
+fun AiQuotaTheme(dark: Boolean, greyscale: Boolean, content: @Composable () -> Unit) {
+    val light = !dark
     val card = CardPalette.of(light)
     val scheme = if (light) {
         lightColorScheme(
@@ -34,7 +34,7 @@ fun AiQuotaTheme(content: @Composable () -> Unit) {
             surfaceVariant = Color(card.background), onSurfaceVariant = Color(card.secondary),
         )
     }
-    CompositionLocalProvider(LocalAiQuotaColors provides AiQuotaColors(card, UsagePalette.of(greyscale = false, light = light), light)) {
+    CompositionLocalProvider(LocalAiQuotaColors provides AiQuotaColors(card, UsagePalette.of(greyscale, light), light)) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
 }

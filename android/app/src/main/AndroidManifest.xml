@@ -4,6 +4,9 @@
     <!-- The provider APIs, and the loopback listener for the login redirect. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Usage notifications (#10), also from the background job. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- No cloud backup: tokens (in noBackupFilesDir anyway) and the usage history never leave
          the device (#19). -->
     <application

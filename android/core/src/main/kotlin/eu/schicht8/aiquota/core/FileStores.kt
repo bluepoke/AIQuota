@@ -14,20 +14,27 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.time.Instant
 
-/** The saved accounts as one JSON file (no tokens in it, see [TokenStore]). Written to a temp
- * file and moved over the original, so a crash can't lose the list. */
+/** The saved accounts as one JSON array, in the list's order (no tokens in it, see
+ * [TokenStore]). Written to a temp file and moved over the original, so a crash can't lose
+ * the list. */
 class JsonFileAccountStore(private val file: File) : AccountStore {
     @Synchronized
-    override fun loadAll(): List<SavedAccount> = read().sortedBy { it.addedAt }
+    override fun loadAll(): List<SavedAccount> = read()
 
     @Synchronized
     override fun save(account: SavedAccount) {
-        val accounts = read().filter { it.key != account.key } + account
-        write(accounts)
+        val accounts = read()
+        write(if (accounts.any { it.key == account.key }) accounts.map { if (it.key == account.key) account else it } else accounts + account)
     }
 
     @Synchronized
     override fun remove(key: String) = write(read().filter { it.key != key })
+
+    @Synchronized
+    override fun reorder(keys: List<String>) {
+        val accounts = read()
+        write(keys.mapNotNull { key -> accounts.firstOrNull { it.key == key } } + accounts.filter { it.key !in keys })
+    }
 
     private fun read(): List<SavedAccount> {
         if (!file.exists()) return emptyList()
